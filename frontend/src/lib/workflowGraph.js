@@ -81,6 +81,9 @@ function getCSSVar(name) {
 
 // selection shadow color is same as category color, but used in box-shadow
 function getNodeCategory(node) {
+  // 新增：复合节点特殊处理
+  if (node.isComposite) return 'composite';
+  
   const hasIVMedia = !!(node.assets && node.assets.output && node.assets.output.images && node.assets.output.images.length > 0)
   const hasAudioMedia = !!(node.assets && node.assets.output && node.assets.output.audio && node.assets.output.audio.length > 0)
   const hasMedia = hasIVMedia || hasAudioMedia
@@ -138,6 +141,10 @@ function getSelectionColor(node) {
 
 //重写名称
 function getNodeHeaderBaseLabel(node) {
+  // 新增复合节点名称
+  if (node.isComposite) return `Composite (${node.combinedNodes?.length || 0} nodes)`;
+
+
   const mid = (node.module_id || '').toLowerCase()
 
   // ★ 两个辅助节点用语义化标题
@@ -247,20 +254,31 @@ export function getVisibleNodesAndLinks(allNodes) {
     if (node._collapsed) {
       findDescendants(node.id, nodeMap).forEach(id => hidden.add(id))
     }
+    // 新增：隐藏被组合的节点
+    //if (node.isCombined) hidden.add(node.id);
   })
 
-  const visibleNodes = allNodes.filter(n => !hidden.has(n.id))
+   const visibleNodes = allNodes.filter(n => !hidden.has(n.id))
   const visibleIds = new Set(visibleNodes.map(n => n.id))
+  
+  // --- 调试点 2: 检查 ID 存在性 ---
+  console.log("当前可见节点 IDs:", Array.from(visibleIds));
 
   const visibleLinks = []
   visibleNodes.forEach(n => {
-    if (n.originalParents && n.originalParents.length > 0) { // 新增：判断有父节点
-      // 改动2：只取第一个父节点生成连线，不再遍历所有p
-      const p = (n.originalParents[1])?n.originalParents[1]:n.originalParents[0]; 
-      if (visibleIds.has(p)) visibleLinks.push({ source: p, target: n.id })
+    if (n.originalParents) {
+      n.originalParents.forEach(pId => {
+        const isParentVisible = visibleIds.has(pId);
+        // 如果你发现 2 和 3 都明明在上面打印的 ID 列表里，但这里判断为 false，说明 ID 类型不匹配（String vs Number）
+        if (isParentVisible) {
+          visibleLinks.push({ source: pId, target: n.id });
+        } else {
+          // --- 调试点 3: 追踪丢失的连线 ---
+          console.warn(`节点[${n.id}] 试图连接父节点[${pId}]，但该父节点不可见(被隐藏或已删除)`);
+        }
+      })
     }
   })
-
   return { visibleNodes, visibleLinks }
 }
 
@@ -358,6 +376,8 @@ function addRightClickMenu(card, d, emit) {
     setTimeout(() => document.addEventListener('click', closeMenu), 0)
   })
 }
+
+
 
 /** 折叠/展开后：同时更新可见性 + 重新布局（带过渡） */
 export function updateVisibility(svgElement, allNodes) {
@@ -479,6 +499,7 @@ export function updateVisibility(svgElement, allNodes) {
     })
 }
 
+
 /** 完整重绘（重新布局 & 初始缩放） */
 export function renderTree(
   svgElement,
@@ -509,6 +530,14 @@ export function renderTree(
       savedView = { k: prev.k, x: prev.x, y: prev.y }
     }
   }
+
+   // --- 调试点 1: 检查原始数据 ---
+  console.log("=== RenderTree Check ===");
+  allNodesData.forEach(n => {
+    if (n.originalParents && n.originalParents.length > 0) {
+      console.log(`Node[${n.id}] 的父节点列表:`, n.originalParents);
+    }
+  });
 
   // 清空旧内容，但不要动 wrapper 本身（保留 __zoom 属性）
   wrapper.html('')
@@ -586,7 +615,10 @@ export function renderTree(
     })
   })
 
-  visibleLinks.forEach(l => g.setEdge(l.source, l.target))
+  visibleLinks.forEach(l => {
+    console.log(`Dagre Edge: ${l.source} -> ${l.target}`);
+    g.setEdge(l.source, l.target);
+  })
 
   dagre.layout(g)
 
@@ -696,6 +728,11 @@ export function renderTree(
     }
   })
 
+  // 新增：初始化框选交互
+  // initSelectionBox(svg, svgElement, allNodesData, emit);
+
+
+
   function getLinkStyle() {
     return { color: defaultLinkColor, id: 'url(#arrowhead-default)' }
   }
@@ -716,6 +753,7 @@ export function renderTree(
     .data(visibleNodes, d => d.id)
     .enter().append('g')
     .attr('class', 'node')
+    .attr('data-id', d => d.id)
     .attr('transform', d => {
       const n = dagreNodes.get(d.id)
       return `translate(${n.x},${n.y})`
@@ -751,7 +789,10 @@ export function renderTree(
       headerBg = NODE_COLORS.videoSoft
     } else if (cat === 'audio') {
       headerBg = NODE_COLORS.audioSoft
+    } else if (cat === 'composite') { // 新增：复合节点头部背景
+      headerBg = 'rgba(139, 92, 246, 0.1)'; // 紫色浅背景
     }
+
 
     header
       .style('background-color', headerBg)
@@ -904,40 +945,6 @@ export function renderTree(
 
     }
 
-    // 复制（和其他节点一样）
-    // const cloneHeaderBtn = toolbar.append('xhtml:button')
-    //   .text('+')
-    //   .style('width', '18px')
-    //   .style('height', '18px')
-    //   .style('border-radius', '999px')
-    //   .style('border', '1px solid #e5e7eb')
-    //   .style('background', '#ffffff')
-    //   .style('font-size', '12px')
-    //   .style('line-height', '1')
-    //   .style('display', 'inline-flex')
-    //   .style('align-items', 'center')
-    //   .style('justify-content', 'center')
-    //   .style('color', '#6b7280')
-    //   .style('cursor', 'pointer')
-    //   .style('user-select', 'none')
-    //   .on('mousedown', ev => ev.stopPropagation())
-    //   .on('click', ev => {
-    //     ev.stopPropagation()
-    //     // TODO: clone node
-    //     console.log('[TODO] clone node', d.id)
-    //   })
-    //   .on('mouseenter', function () {
-    //     d3.select(this)
-    //       .style('background', '#6b7280')
-    //       .style('color', '#ffffff')
-    //       .style('border-color', '#4b5563')
-    //   })
-    //   .on('mouseleave', function () {
-    //     d3.select(this)
-    //       .style('background', '#ffffff')
-    //       .style('color', '#6b7280')
-    //       .style('border-color', '#e5e7eb')
-    //   })
 
     // 删除（关闭），同样保持一致
     const deleteHeaderBtn = toolbar.append('xhtml:button')
@@ -3222,6 +3229,228 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
 
   addTooltip(gEl, d)
 }
+// --- 新增：渲染复合节点 ---
+function renderCompositeNode(gEl, d, selectedIds, emit) {
+  const fo = gEl.append('foreignObject')
+    .attr('width', d.calculatedWidth)
+    .attr('height', d.calculatedHeight)
+    .attr('x', -d.calculatedWidth / 2)
+    .attr('y', -d.calculatedHeight / 2)
+    .style('overflow', 'visible');
+
+  const card = fo.append('xhtml:div')
+    .attr('class', 'node-card')
+    .attr('data-node-category', getNodeCategory(d))
+    .style('width', '100%')
+    .style('height', '100%')
+    .style('display', 'flex')
+    .style('flex-direction', 'column')
+    .style('border-width', '2px')
+    .style('border-color', getNodeBorderColor(d))
+    .style('border-radius', '8px')
+    .style('position', 'relative')
+    .style('cursor', 'pointer')
+    .style('background-color', '#ffffff')
+    .style('user-select', 'none')
+    .style('-webkit-user-select', 'none');
+
+  setCardSelected(card, d, isVisuallySelected(d, selectedIds));
+
+  card.on('click', ev => {
+    if (ev.target && ev.target.closest && ev.target.closest('button, input, textarea')) return;
+    ev.stopPropagation();
+    const selected = new Set(selectedIds);
+    const on = selected.has(d.id);
+    if (on) selected.delete(d.id);
+    else if (selected.size < 2) selected.add(d.id);
+    setCardSelected(card, d, !on);
+    emit('update:selectedIds', Array.from(selected));
+  });
+
+  // 构建头部
+  buildHeader(card, d);
+  addRightClickMenu(card, d, emit);
+
+  // 复合节点内容区
+  const body = card.append('xhtml:div')
+    .style('flex', '1 1 auto')
+    .style('min-height', '0')
+    .style('padding', '8px')
+    .style('overflow-y', 'auto');
+
+  // ========== 核心修改：展示输入输出配对 ==========
+  // 1. 提取并匹配所有子节点的输入输出对
+  const ioPairs = [];
+  (d.combinedNodes || []).forEach(node => {
+    // 提取当前节点的输入（input）
+    const input = {
+      images: node.assets?.input?.images || [],
+      audio: node.assets?.input?.audio || [],
+      text: node.parameters?.text || node.parameters?.positive_prompt || ''
+    };
+    
+    // 提取当前节点的输出（output）
+    const output = {
+      images: node.assets?.output?.images || [],
+      audio: node.assets?.output?.audio || [],
+      text: node.parameters?.text || node.parameters?.positive_prompt || ''
+    };
+
+    // 只保留有有效内容的配对
+    if (input.images.length > 0 || input.audio.length > 0 || input.text ||
+        output.images.length > 0 || output.audio.length > 0 || output.text) {
+      ioPairs.push({
+        nodeId: node.id,
+        nodeName: getNodeHeaderBaseLabel(node) || node.module_id || 'Unknown Node',
+        input,
+        output
+      });
+    }
+  });
+
+  // 2. 渲染输入输出配对列表
+  if (ioPairs.length === 0) {
+    body.append('xhtml:div')
+      .style('padding', '16px')
+      .style('text-align', 'center')
+      .style('color', '#6b7280')
+      .style('font-size', '12px')
+      .text('No input/output data in combined nodes');
+  } else {
+    const pairList = body.append('xhtml:div')
+      .style('display', 'flex')
+      .style('flex-direction', 'column')
+      .style('gap', '12px');
+
+    ioPairs.forEach(pair => {
+      // 单个节点的输入输出卡片
+      const nodeCard = pairList.append('xhtml:div')
+        .style('padding', '8px')
+        .style('background', '#f9fafb')
+        .style('border-radius', '6px')
+        .style('border', '1px solid #e5e7eb');
+
+      // 节点名称
+      nodeCard.append('xhtml:div')
+        .style('font-weight', '600')
+        .style('font-size', '11px')
+        .style('color', '#111827')
+        .style('margin-bottom', '6px')
+        .text(`${pair.nodeName} (ID: ${pair.nodeId.slice(-4)})`);
+
+      // 输入输出容器（左右布局）
+      const ioContainer = nodeCard.append('xhtml:div')
+        .style('display', 'flex')
+        .style('gap', '8px')
+        .style('font-size', '10px');
+
+      // 输入区域
+      const inputCol = ioContainer.append('xhtml:div')
+        .style('flex', '1')
+        .style('padding', '4px')
+        .style('background', '#f0f9ff')
+        .style('border-radius', '4px');
+
+      inputCol.append('xhtml:div')
+        .style('font-weight', '500')
+        .style('color', '#0284c7')
+        .style('margin-bottom', '4px')
+        .text('Input');
+
+      // 渲染输入内容
+      renderMediaContent(inputCol, pair.input);
+
+      // 输出区域
+      const outputCol = ioContainer.append('xhtml:div')
+        .style('flex', '1')
+        .style('padding', '4px')
+        .style('background', '#fef3c7')
+        .style('border-radius', '4px');
+
+      outputCol.append('xhtml:div')
+        .style('font-weight', '500')
+        .style('color', '#d97706')
+        .style('margin-bottom', '4px')
+        .text('Output');
+
+      // 渲染输出内容
+      renderMediaContent(outputCol, pair.output);
+    });
+  }
+
+  // 添加解组按钮
+  const ungroupBtn = body.append('xhtml:button')
+    .style('margin-top', '8px')
+    .style('padding', '4px 12px')
+    .style('background', '#8b5cf6') // 复合节点主题色
+    .style('color', 'white')
+    .style('border', 'none')
+    .style('border-radius', '4px')
+    .style('font-size', '10px')
+    .style('cursor', 'pointer')
+    .text('Ungroup Nodes')
+    .on('click', (ev) => {
+      ev.stopPropagation();
+      emit('ungroup-node', d.id);
+    });
+}
+
+// --- 辅助函数：渲染媒体内容（图片/音频/文本） ---
+function renderMediaContent(container, data) {
+  // 渲染文本
+  if (data.text) {
+    container.append('xhtml:div')
+      .style('color', '#374151')
+      .style('margin-bottom', '4px')
+      .style('word-break', 'break-all')
+      .text(`Text: ${data.text.slice(0, 30)}${data.text.length > 30 ? '...' : ''}`);
+  }
+
+  // 渲染图片
+  if (data.images.length > 0) {
+    const imgContainer = container.append('xhtml:div')
+      .style('display', 'flex')
+      .style('gap', '4px')
+      .style('margin-bottom', '4px');
+
+    data.images.slice(0, 2).forEach(imgUrl => {
+      imgContainer.append('xhtml:img')
+        .attr('src', imgUrl)
+        .style('width', '40px')
+        .style('height', '40px')
+        .style('object-fit', 'cover')
+        .style('border-radius', '2px');
+    });
+
+    if (data.images.length > 2) {
+      imgContainer.append('xhtml:div')
+        .style('width', '40px')
+        .style('height', '40px')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
+        .style('background', '#e5e7eb')
+        .style('border-radius', '2px')
+        .style('font-size', '10px')
+        .text(`+${data.images.length - 2}`);
+    }
+  }
+
+  // 渲染音频
+  if (data.audio.length > 0) {
+    container.append('xhtml:div')
+      .style('color', '#4b5563')
+      .style('margin-bottom', '4px')
+      .text(`Audio: ${data.audio.length} file(s)`);
+  }
+
+  // 无内容提示
+  if (!data.text && data.images.length === 0 && data.audio.length === 0) {
+    container.append('xhtml:div')
+      .style('color', '#9ca3af')
+      .text('No content');
+  }
+}
 
 
   // --- 主循环：根据类型分发渲染 ---
@@ -3319,10 +3548,19 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
       typeof rawAudioPath === 'string' &&
       (rawAudioPath.includes('.mp3') || rawAudioPath.includes('.wav') || rawAudioPath.includes('subfolder=audio') || mediaType === 'audio')
 
+    // if (d.isComposite) {
+    //   // 复合节点：调用专属渲染函数
+    //   console.log('渲染复合节点：', d.id); // 验证是否走到这里
+    //   renderCompositeNode(gEl, d, selectedIds, emit);
+    // } 
+
     if (cardType === 'textFull') {
       console.log(`renderTree textFull`)
       renderTextFullNode(gEl, d, selectedIds, emit)
-    } else if (cardType === 'audio' || isAudioMedia) {
+    } else if(getNodeCategory(d)==='composite'){
+      console.log('渲染复合节点：', d.id); // 验证是否走到这里
+      renderCompositeNode(gEl, d, selectedIds, emit);
+    }else if (cardType === 'audio' || isAudioMedia) {
       renderAudioNode(gEl, d, selectedIds, emit, workflowTypes)
     } else if (cardType == 'TextImage'){
       console.log(`render TextImage`)

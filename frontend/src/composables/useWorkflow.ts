@@ -89,6 +89,20 @@ export interface AppNode {
   linkColor?:string;
   _collapsed?: boolean;
   parameters: Record<string, any> | null;
+
+  // ===== 前端临时字段（仅内存使用，不存数据库，标记为可选）=====
+  childrenIds?: string[];           // 前端临时：子节点ID列表（计算得出）
+  isComposite?: boolean;            // 前端临时：是否为复合节点
+  sourceNodeIds?: string[];         // 前端临时：复合节点包含的原节点ID
+  label?: string;                   // 前端临时：节点显示名称
+  assets?: any;                     // 前端临时：合并用的资产数据
+}
+
+// 复合节点类型（仅前端使用，不影响数据库）
+export type CompositeNode = AppNode & {
+  isComposite: true; // 强制标记为复合节点
+  sourceNodeIds: string[];
+  childrenIds: string[];
 }
 
 // 拼接序列中片段的类型

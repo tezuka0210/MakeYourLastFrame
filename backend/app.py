@@ -1106,6 +1106,11 @@ def create_node():
             positive_prompt = parameters.get('optimized_positive_prompt', parameters.get('positive_prompt', ''))
             workflow[prompt_positive_node_id]["inputs"]["text"] = positive_prompt
 
+        prompt_t2i_node_id = find_node_id_by_title(workflow, "CLIP Text Encode (T2I Prompt)")
+        if prompt_t2i_node_id:
+            positive_prompt = parameters.get('optimized_positive_prompt', parameters.get('positive_prompt', ''))
+            workflow[prompt_t2i_node_id]["inputs"]["value"] = positive_prompt
+
         # prompt_negative_node_id = find_node_id_by_title(workflow, "CLIP Text Encode (Negative Prompt)")
         # if prompt_negative_node_id:
         #     # 同理：用 optimized_negative_prompt 执行生成

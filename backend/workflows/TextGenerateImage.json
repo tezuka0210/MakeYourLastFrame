@@ -18,7 +18,7 @@
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
-      "title": "CLIP Text Encode (Positive Prompt)"
+      "title": "CLIP Text Encode (T2I Prompt)"
     }
   },
   "61": {
