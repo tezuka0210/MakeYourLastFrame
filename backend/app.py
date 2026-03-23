@@ -29,9 +29,8 @@ from agents.knowledge_agent import knowledge_agent_node
 from agents.workflow_agent import workflow_selector_node
 from agents.prompt_agent import prompt_agent_node
 from agents.final_prompt_agent import final_prompt_agent_node 
-
 # --- 模式开关 ----
-APP_MODE = os.getenv('APP_MODE', 'local') 
+APP_MODE = os.getenv('APP_MODE', 'server') 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
@@ -1287,35 +1286,6 @@ def create_node():
         print(f"执行 ComfyUI 工作流或数据库操作时发生未知错误: {e}")
         return jsonify({"error": "执行工作流时发生内部错误。"}), 500
 
-    # node_data = database.get_node(node_id)
-    # if not node_data:
-    #     print(f"节点 {node_id} 不存在于数据库中")
-    #     return []
-
-    # # 1. 原样获取节点已有的 assets（包括 input 所有内容，不做任何修改）
-    # existing_assets = node_data.get('assets', {})
-
-    # # 2. 构建新的 assets：保留原有所有内容，仅新增/更新 output 字段
-    # assets_with_output = {
-    #     **existing_assets,  # 解构原有 assets（原样保留 input 及其他所有字段）
-    #     "output": outputs   # 新增/覆盖 output 字段（生成结果）
-    # }
-
-
-    # # --- 在数据库中记录新节点 ---
-    # database.update_node(
-    #     node_id=node_id,
-    #     payload={
-    #             "title": node_title,
-    #             "module_id": final_module_id,
-    #             "assets": assets_with_output,
-    #             "parameters": parameters,
-    #             "status":'completed'
-    #         }
-
-    # )
-    # --- 在 create_node 函数内部 ---
-
 
 
     if outputs:
@@ -1377,6 +1347,68 @@ def create_node():
                     branch_id='branch_1',
                     image_url=entity['path']
                 )
+            
+
+            # ========== 新增：执行 RemovePeople.json 工作流 ==========
+            print(f"🧹 开始执行 RemovePeople.json 工作流生成背景图...")
+            background_image_url = None
+            background_image_path = None
+            
+            try:
+                # 1. 加载 RemovePeople 工作流
+                remove_people_workflow = load_workflow('RemovePeople')
+                if not remove_people_workflow:
+                    raise ValueError("未找到 RemovePeople.json 工作流文件")
+                
+                # 2. 将生成的图片复制到 input 目录（供 RemovePeople 工作流使用）
+                input_image_path = os.path.join(COMFYUI_INPUT_PATH, generated_image_rel_path)
+                shutil.copy2(generated_image_path, input_image_path)
+                print(f"    - 已复制生成图片到input目录: {input_image_path}")
+                
+                # 3. 注入图片文件名到 RemovePeople 工作流
+                load_image_node_id = find_node_id_by_title(remove_people_workflow, "LoadImage")
+                if load_image_node_id:
+                    remove_people_workflow[load_image_node_id]["inputs"]["image"] = generated_image_rel_path
+                    print(f"    - 已注入图片到 RemovePeople 工作流: {generated_image_rel_path}")
+                else:
+                    raise ValueError("RemovePeople 工作流中未找到 LoadImage 节点")
+                
+                # 4. 执行 RemovePeople 工作流
+                remove_queued_prompt = queue_comfyui_prompt(remove_people_workflow)
+                remove_prompt_id = remove_queued_prompt['prompt_id']
+                remove_outputs = get_comfyui_outputs(remove_prompt_id)
+                
+                # 5. 解析背景图结果
+                if remove_outputs and remove_outputs.get('images'):
+                    background_url = remove_outputs['images'][0]
+                    parsed_bg_url = urlparse(background_url)
+                    bg_params = parse_qs(parsed_bg_url.query)
+                    bg_filename = bg_params.get('filename', [None])[0]
+                    
+                    # 正确代码：构建 /view 路由的 URL
+                    if bg_filename:
+                        # 构建正确的 HTTP URL（和主生成逻辑保持一致）
+                        background_image_url = f"/view?filename={urllib.parse.quote_plus(bg_filename)}&subfolder=&type=output"
+                        background_image_path = os.path.join(COMFYUI_OUTPUT_PATH, bg_filename)
+                        print(f"    - 成功生成背景图: {background_image_path}")
+                        print(f"    - 背景图访问URL: {background_image_url}")
+                        
+                        # 将背景图信息存入 entity（存 URL 而非本地路径）
+                        database.add_entity_appearance(
+                            tree_id=tree_id,
+                            name='background',
+                            node_id=node_id,
+                            branch_id='branch_1',
+                            image_url=background_image_url  # 这里存 HTTP URL 而非本地路径
+                        )
+                        print(f"    - 背景图已存入entity表")
+                    else:
+                        print("⚠️ 无法解析背景图文件名")
+                else:
+                    print("⚠️ RemovePeople 工作流未返回任何图片")
+                    
+            except Exception as e:
+                print(f"⚠️ 执行 RemovePeople 工作流失败: {e}")
 
                 
             # 5. 整合进节点的 Assets (Nodes 表)
@@ -1386,7 +1418,7 @@ def create_node():
             node_assets = {
                 **existing_assets,
                 "output": outputs,
-                "segmented": segmented_results # 关键新增：当前节点的抠图快照
+                "segmented": segmented_results, # 关键新增：当前节点的抠图快照
             }
             
         except Exception as e:
