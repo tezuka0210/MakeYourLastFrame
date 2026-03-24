@@ -1,16 +1,13 @@
 <template>
   <div class="stitch-card">
-    <!-- <h2 class="text-l font-semibold mb-4 text-gray-700">Stitching Sequence</h2> -->
-
     <div
       id="stitching-panel-wrapper"
-      class="bg-gray-100 border border-dashed border-gray-300 flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
+      class="stitching-panel-wrapper flex-1 min-h-0"
       @wheel.prevent="handleZoom"
       @scroll="handleTimelineScroll"
     >
-
-      <!-- ★★ Transport strip: collected snapshots (buffer) -->
-      <div id="buffer-strip">
+      <!-- Buffer strip -->
+      <div id="buffer-strip" ref="bufferStripRef">
         <div
           v-for="(clip, index) in bufferClips"
           :key="`buffer-${clip.nodeId}-${index}`"
@@ -26,6 +23,8 @@
               'insert-after': isInsertAfter(index)
             }
           ]"
+          :style="getBufferItemStyle(clip)"
+          :title="clip.filename || clip.name || clip.nodeId || 'Buffer asset'"
           draggable="true"
           @dragstart="handleDragStart('buffer', index, $event)"
           @dragover.prevent="onBufferDragOver(index, $event)"
@@ -33,17 +32,14 @@
           @drop.prevent.stop="onBufferDrop(index, $event)"
           @dragend="handleDragEnd"
         >
-          <!-- 缩略内容，根据类型区分 -->
           <template v-if="clip.type === 'image'">
-            <img
-              :src="clip.thumbnailUrl"
-              draggable="false"
-            />
+            <img :src="clip.thumbnailUrl" class="buffer-thumb" draggable="false" />
           </template>
 
           <template v-else-if="clip.type === 'video'">
             <video
               :src="clip.thumbnailUrl"
+              class="buffer-thumb"
               autoplay
               loop
               muted
@@ -53,17 +49,14 @@
             ></video>
           </template>
 
-          <!-- 音频：不再显示图像缩略图，只用色块 + 图标区分 -->
           <template v-else>
             <div class="buffer-audio-icon">♪</div>
           </template>
 
-          <!-- 底部元数据条：用对应三原色填充，文字显示关键属性 -->
           <div class="buffer-meta">
             {{ getBufferMeta(clip) }}
           </div>
 
-          <!-- 右上角关闭按钮：复用全局 remove-btn 样式 -->
           <span
             class="remove-btn buffer-remove-btn"
             @mousedown.stop.prevent
@@ -77,11 +70,11 @@
           v-if="bufferClips.length === 0"
           class="buffer-placeholder"
         >
-          Click ☆ on any node to collect snapshots here…
+          Your assets can be collected here…
         </span>
       </div>
 
-      <!-- Timeline: width is set dynamically by drawTimeline -->
+      <!-- Timeline -->
       <div
         id="timeline-ruler"
         @mousedown="handleTimelineMouseDown"
@@ -93,7 +86,7 @@
       <!-- Video track -->
       <div
         id="stitching-panel"
-        class="bg-gray-100 rounded min-h-[80px] py-4 px-0"
+        class="track-panel track-panel-video"
         :class="{ 'drag-over': isDraggingOverContainer === 'video' }"
         @dragover.prevent="handleDragOverContainer('video')"
         @dragleave="handleDragLeaveContainer"
@@ -116,7 +109,6 @@
             @drop.prevent.stop="handleDropOnItem('video', index)"
             @dragend="handleDragEnd"
           >
-            <!-- 缩略图 -->
             <img
               v-if="clip.type === 'image'"
               :src="clip.thumbnailUrl"
@@ -135,7 +127,6 @@
               draggable="false"
             ></video>
 
-            <!-- 底部信息条：icon + name + duration -->
             <div class="clip-meta">
               <div class="clip-meta-left">
                 <span class="clip-name">{{ getClipName(clip) }}</span>
@@ -143,15 +134,13 @@
               <span class="clip-duration">{{ formatClipDuration(clip.duration) }}</span>
             </div>
 
-            <!-- 删除按钮 -->
             <span class="remove-btn" @click.stop="removeVideo(index)">×</span>
 
-            <!-- 拖拽覆盖提示 -->
-            <div
+            <!-- <div
               v-if="draggedOver?.track === 'video' && draggedOver?.index === index"
               class="absolute inset-0 bg-blue-500 opacity-50 border-2 border-blue-700 pointer-events-none"
               style="border-radius: 4px"
-            ></div>
+            ></div> -->
           </div>
 
           <span
@@ -167,7 +156,7 @@
       <!-- Audio track -->
       <div
         id="audio-stitching-panel"
-        class="p-4 rounded min-h-[40px]"
+        class="track-panel track-panel-audio"
         :class="{ 'drag-over': isDraggingOverContainer === 'audio' }"
         @dragover.prevent="handleDragOverContainer('audio')"
         @dragleave="handleDragLeaveContainer"
@@ -196,11 +185,11 @@
 
             <span class="remove-btn" @click.stop="removeAudio(index)">×</span>
 
-            <div
+            <!-- <div
               v-if="draggedOver?.track === 'audio' && draggedOver?.index === index"
               class="absolute inset-0 bg-blue-500 opacity-50 border-2 border-blue-700 pointer-events-none"
               style="border-radius: 4px"
-            ></div>
+            ></div> -->
           </div>
 
           <span
@@ -213,22 +202,6 @@
         </div>
       </div>
     </div>
-
-     <!-- Stitch button - 修改为统一的灰色系和圆角 -->
-    <button
-      id="stitch-button"
-      class="stitch-btn"
-      :disabled="clips.length === 0 || isStitching"
-      @click="stitch"
-    >
-      {{ isStitching ? 'Stitching…' : 'Stitch Video' }}
-    </button>
-
-    <!-- 结果链接去掉，不再展示可见链接
-    <div id="stitch-result" class="mt-3 text-center">
-      ...
-    </div>
-    -->
   </div>
 </template>
 
@@ -250,7 +223,7 @@ const props = defineProps({
 const emit = defineEmits([
   'update:clips',
   'update:audioClips',
-  'update:bufferClips', 
+  'update:bufferClips',
   'stitch',
   'remove-clip',
   'remove-audio-clip'
@@ -279,6 +252,60 @@ const {
   handleTimelineMouseUp
 } = useStitching(props, emit)
 
+function handleCanvasExportToBuffer(event: Event) {
+  const detail = (event as CustomEvent)?.detail
+  const incoming = Array.isArray(detail?.clips) ? detail.clips : []
+
+  if (!incoming.length) return
+
+  const next = [...(props.bufferClips as any[]), ...incoming]
+  emit('update:bufferClips', next)
+}
+
+const bufferStripRef = ref<HTMLElement | null>(null)
+const bufferCardHeight = ref(56)
+let bufferResizeObserver: ResizeObserver | null = null
+
+function updateBufferCardHeight() {
+  const el = bufferStripRef.value
+  if (!el) return
+
+  const cs = getComputedStyle(el)
+  const pt = parseFloat(cs.paddingTop || '0')
+  const pb = parseFloat(cs.paddingBottom || '0')
+
+  const innerH = el.clientHeight - pt - pb
+  bufferCardHeight.value = Math.max(40, Math.round(innerH - 4))
+}
+
+function getBufferItemStyle(clip: any) {
+  const h = bufferCardHeight.value
+
+  if (clip.type === 'audio') {
+    return {
+      height: `${h}px`,
+      width: `${Math.max(96, Math.round(h * 1.55))}px`,
+      minWidth: `${Math.max(96, Math.round(h * 1.55))}px`,
+      boxSizing: 'border-box',
+      flex: '0 0 auto',
+    }
+  }
+
+  const rawW = Number(clip.width || clip.naturalWidth || clip.exportWidth || 1)
+  const rawH = Number(clip.height || clip.naturalHeight || clip.exportHeight || 1)
+  const ratio = rawW > 0 && rawH > 0 ? rawW / rawH : 1
+  const normalizedRatio = Math.min(3.2, Math.max(0.65, ratio))
+  const w = Math.max(60, Math.min(260, Math.round(h * normalizedRatio)))
+
+  return {
+    height: `${h}px`,
+    width: `${w}px`,
+    minWidth: `${w}px`,
+    boxSizing: 'border-box',
+    flex: '0 0 auto',
+  }
+}
+
 /* ========= buffer-strip 的插入辅助线状态 ========= */
 
 const bufferInsert = ref<null | { index: number; position: 'before' | 'after' }>(null)
@@ -291,7 +318,6 @@ function onBufferDragOver(index: number, e: DragEvent) {
   const position: 'before' | 'after' = offsetX < rect.width / 2 ? 'before' : 'after'
 
   bufferInsert.value = { index, position }
-  // 仍然把 hover 状态交给通用逻辑
   handleDragOverItem('buffer', index)
 }
 
@@ -333,10 +359,6 @@ function destroyBufferWaveforms() {
   bufferWaveforms.value = []
 }
 
-/**
- * 当 bufferClips 变化时，为其中的 audio 类型创建/更新波形缩略图
- * 依赖 clip.mediaUrl（建议在 useWorkflow 的 bufferClips 构造时写入）
- */
 watch(
   () => props.bufferClips,
   (newClips: any[]) => {
@@ -348,10 +370,7 @@ watch(
         if (!el) return
 
         const audioUrl: string | undefined = clip.mediaUrl || clip.media_url || clip.audioUrl
-        if (!audioUrl) {
-          // 没有音频 URL，就不画波形，避免报错
-          return
-        }
+        if (!audioUrl) return
 
         const progressColor =
           getComputedStyle(document.documentElement)
@@ -378,14 +397,33 @@ watch(
 
 onBeforeUnmount(() => {
   destroyBufferWaveforms()
+  if (bufferResizeObserver) {
+    bufferResizeObserver.disconnect()
+    bufferResizeObserver = null
+  }
+  window.removeEventListener(
+    'canvas-export-to-buffer',
+    handleCanvasExportToBuffer as EventListener
+  )
 })
 
-/* 初次挂载时绘制一次时间轴 */
 onMounted(() => {
   drawTimeline()
+  nextTick(() => {
+    updateBufferCardHeight()
+    if (bufferStripRef.value && typeof ResizeObserver !== 'undefined') {
+      bufferResizeObserver = new ResizeObserver(() => {
+        updateBufferCardHeight()
+      })
+      bufferResizeObserver.observe(bufferStripRef.value)
+    }
+  })
+  window.addEventListener(
+    'canvas-export-to-buffer',
+    handleCanvasExportToBuffer as EventListener
+  )
 })
 
-/* 缩放或 clips/audioClips 改变时重绘时间轴 */
 watch(
   () => [pixelsPerSecond.value, props.clips, props.audioClips],
   () => {
@@ -394,7 +432,16 @@ watch(
   { deep: true }
 )
 
-/* 自动触发浏览器下载（当 stitchResultUrl 更新时） */
+watch(
+  () => props.bufferClips,
+  () => {
+    nextTick(() => {
+      updateBufferCardHeight()
+    })
+  },
+  { deep: true }
+)
+
 watch(
   () => props.stitchResultUrl,
   (newUrl) => {
@@ -409,36 +456,26 @@ watch(
   }
 )
 
-/* 快捷方法 */
 const removeVideo = (index: number) => emit('remove-clip', index)
 const removeAudio = (index: number) => emit('remove-audio-clip', index)
 const stitch = () => emit('stitch')
 
-/** buffer 删除：用 v-model:bufferClips 更新上层状态 */
 const removeBuffer = (index: number) => {
   const next = [...(props.bufferClips as any[])]
   next.splice(index, 1)
   emit('update:bufferClips', next)
 }
 
-/* 帮视频块取一个显示名称 */
 const getClipName = (clip: any) => {
   return clip.filename || clip.name || clip.nodeId || 'Video'
 }
 
-/* 格式化时长为一位小数，例如 3.2s */
 const formatClipDuration = (duration: number) => {
   const v = Number(duration) || 0
   return v.toFixed(1) + 's'
 }
 
-/**
- * buffer-meta 显示的关键属性
- * - image / video: 优先显示分辨率（width×height 或 resolution）
- * - audio: 显示时长（秒）
- */
 const getBufferMeta = (clip: any): string => {
-  // 音频：时长是最直观的属性
   if (clip.type === 'audio') {
     if (clip.duration != null) {
       const v = Number(clip.duration) || 0
@@ -450,7 +487,6 @@ const getBufferMeta = (clip: any): string => {
     return 'Audio'
   }
 
-  // 图片 / 视频：分辨率优先
   if (clip.width && clip.height) {
     return `${clip.width}×${clip.height}`
   }
@@ -458,45 +494,136 @@ const getBufferMeta = (clip: any): string => {
     return String(clip.resolution)
   }
 
-  // 没有分辨率信息时，退而求其次用时长（如果有）
   if (clip.duration != null) {
     const v = Number(clip.duration) || 0
     return `${v.toFixed(1)} s`
   }
 
-  // 最后才 fallback 到类型名
   if (clip.type === 'image') return 'Image'
   if (clip.type === 'video') return 'Video'
   return 'Media'
 }
-
 </script>
 
 <style scoped>
-/* 固定整体容器背景，让四条轨道视觉一致 */
-#stitching-panel-wrapper {
-  background: #f9fafb;
-  border-radius: 8px;
-  overflow-y: visible;   /* 不裁切内部内容 */
+.stitch-card {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-/* 空 buffer 的占位文字 */
+#stitching-panel-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1px dashed #c7ced8;
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+#buffer-strip {
+  flex: 1 1 auto;
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px 14px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  overflow-x: visible;
+}
+
 .buffer-placeholder {
   font-size: 12px;
   color: #9ca3af;
   font-style: italic;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.35;
 }
 
-/* 轨道占位文字，和 buffer 一致的风格 */
-.track-placeholder {
-  font-size: 12px;
-  color: #9ca3af;
-  font-style: italic;
-  white-space: nowrap;
+.buffer-item {
+  position: relative;
+  align-self: center;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid #d6dde6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
-/* ===== buffer 内插入辅助线：竖线提示 before/after ===== */
+.buffer-item--audio {
+  justify-content: center;
+  background: linear-gradient(180deg, #fff6f6 0%, #ffffff 100%);
+}
+
+.buffer-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.buffer-audio-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--media-audio-bg, #F4A7A8) 18%, #ffffff);
+  color: #b45309;
+  font-size: 16px;
+}
+
+.buffer-meta {
+  position: absolute;
+  left: 6px;
+  bottom: 5px;
+  max-width: calc(100% - 28px);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6b7280;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.buffer-remove-btn {
+  top: 4px;
+  right: 4px;
+}
+
 .buffer-item.insert-before::before,
 .buffer-item.insert-after::after {
   content: '';
@@ -504,7 +631,8 @@ const getBufferMeta = (clip: any): string => {
   top: 6px;
   bottom: 6px;
   width: 2px;
-  background: #60a5fa;  /* 蓝色提示线 */
+  background: #94a3b8;
+  border-radius: 999px;
 }
 
 .buffer-item.insert-before::before {
@@ -515,93 +643,232 @@ const getBufferMeta = (clip: any): string => {
   right: -2px;
 }
 
-/* ===== 轨道分隔线：时间轴下是 video，上 video 下是 audio ===== */
-
 #timeline-ruler {
-  border-top: none; /* 上面的线由 buffer-strip 提供 */
+  flex: 0 0 30px;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 0;
+  box-shadow: inset 0 1px 0 #d1d5db, inset 0 -1px 0 #d1d5db;
 }
 
-/* video 轨道上边缘线（和灰色一致） */
-#stitching-panel {
-  border-top: 1px solid #e5e7eb;
-}
-
-/* audio 轨道上边缘线（固定灰色） */
+.track-panel,
+#stitching-panel,
 #audio-stitching-panel {
-  border-top: 1px solid #e5e7eb;
+  flex-grow: 0;
+  flex-shrink: 0;
+  min-width: max-content;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-/* Audio clip 在轨道中的样式（你原来已有，可以保留/微调） */
+#stitching-panel {
+  flex-basis: 76px;
+  height: 76px;
+  min-height: 76px;
+  max-height: 76px;
+  padding: 6px 0;
+  box-shadow: inset 0 1px 0 #d1d5db;
+}
+
+#audio-stitching-panel {
+  flex-basis: 54px;
+  height: 54px;
+  min-height: 54px;
+  max-height: 54px;
+  padding: 6px 0;
+  box-shadow: inset 0 1px 0 #d1d5db;
+}
+
+#clips-container,
+#audio-clips-container {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+.track-placeholder {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+#clips-placeholder,
+#audio-clips-placeholder {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: 0;
+}
+
+.clip-item,
 .audio-clip-item {
   position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.clip-item {
+  padding: 4px;
+  border: 1px solid #dbe2ea;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.clip-item-image,
+.clip-item-video {
+  justify-content: center;
+}
+
+.thumb {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.clip-meta {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 10px;
+  color: #475569;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.clip-meta-left {
+  min-width: 0;
+}
+
+.clip-name,
+.clip-duration {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-clip-item {
+  padding: 0 10px;
   border-radius: 6px;
   border: 1px solid var(--media-audio-bg, #F4A7A8);
   background: color-mix(in srgb, var(--media-audio-bg, #F4A7A8) 16%, #ffffff);
 }
 
-/* ========== Card：统一右侧 stitching 面板外观（对齐 LeftLayout） ========== */
-.stitch-card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-  padding: 12px; /* 比 p-4 更接近左侧紧凑风格 */
-}
-
-/* 固定整体容器背景，让四条轨道视觉一致 */
-#stitching-panel-wrapper {
-  background: #f9fafb;
-  border-radius: 10px;
-  overflow-y: visible;
-}
-
-/* ========== Stitch Button：统一 LeftLayout 的按钮语义（Apply/Confirm 风格） ========== */
-.stitch-btn {
-  margin-top: 10px;
+.audio-thumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  height: 36px;
+  min-width: 0;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.audio-clip-name,
+.audio-clip-duration {
+  white-space: nowrap;
+}
+
+.audio-clip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remove-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-
-  background: #ffffff;
-  color: #374151;                 /* text-gray-700 */
-  border: 1px solid #d1d5db;      /* border-gray-300 */
-  border-radius: 10px;
-
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
-.stitch-btn:not(:disabled):hover {
-  background: #f9fafb;            /* very light gray */
-  border-color: #111827;          /* gray-900 */
-  color: #111827;
-  box-shadow: 0 4px 12px rgba(17,24,39,0.10);
+.clip-item.dragging,
+.audio-clip-item.dragging,
+.buffer-item.dragging {
+  opacity: 0.55;
 }
 
-.stitch-btn:not(:disabled):active {
-  transform: scale(0.99);
+@media (max-height: 820px) {
+  #buffer-strip {
+    min-height: 66px;
+    padding: 10px 12px 6px 12px;
+  }
+
+  #timeline-ruler {
+    flex-basis: 26px;
+    height: 26px;
+    min-height: 26px;
+    max-height: 26px;
+  }
+
+  #stitching-panel {
+    flex-basis: 68px;
+    height: 68px;
+    min-height: 68px;
+    max-height: 68px;
+    padding: 4px 0;
+  }
+
+  #audio-stitching-panel {
+    flex-basis: 48px;
+    height: 48px;
+    min-height: 48px;
+    max-height: 48px;
+    padding: 4px 0;
+  }
+
+  #clips-container,
+  #audio-clips-container {
+    padding: 0 12px;
+    gap: 6px;
+  }
+
+  .buffer-placeholder,
+  .track-placeholder {
+    font-size: 11px;
+  }
 }
-
-.stitch-btn:disabled {
-  background: #ffffff;
-  color: #9ca3af;                 /* text-gray-400 */
-  border-color: #e5e7eb;          /* border-gray-200 */
-  cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
-}
-
-.stitch-btn:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(17,24,39,0.12);
-}
-
-
 </style>
-

@@ -1,77 +1,347 @@
 <template>
-  <aside class="h-full min-h-0 bg-white rounded-lg shadow p-3 flex flex-col">
-    <header class="mb-2">
-      <h2 class="text-sm font-semibold text-gray-700">Inspector / Metadata</h2>
-    </header>
+  <aside class="mask-pane-shell">
+    <!-- Top Toolbar -->
+    <div class="toolbar-shell">
+      <div class="toolbar-bar">
+        <!-- Left tools -->
+        <div class="toolbar-group">
+          <button
+            id="tool-select-btn"
+            class="toolbar-btn is-active"
+            title="Select"
+            aria-label="Select"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 4l10 10-4 1 2 5-2 1-2-5-3 3V4z" />
+            </svg>
+          </button>
 
-    <div class="text-xs text-gray-500 mb-4">
-      Right pane placeholder. You can put node details, logs,
-      or advanced timeline controls here later.
-    </div>
+          <button
+            id="tool-region-btn"
+            class="toolbar-btn"
+            title="Region"
+            aria-label="Region"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="5" y="5" width="14" height="14" rx="2" />
+              <path d="M9 9h6v6H9z" />
+            </svg>
+          </button>
 
-    <div class="mt-4 flex flex-col flex-1">
-      <h3 class="text-xs font-semibold text-gray-700 mb-2">Drawing Canvas</h3>
-      <!-- 绘画面板：纯原生DOM，无Vue渲染逻辑 -->
-      <div 
-        id="drawing-board"
-        class="flex-1 min-h-[300px] border-2 border-dashed border-gray-300 rounded-lg relative overflow-hidden bg-gray-50 transition-all duration-200"
-      >
-        <!-- 原生占位提示（由JS控制显示/隐藏） -->
-        <div class="canvas-placeholder absolute inset-0 flex flex-col items-center justify-center text-xs text-gray-400">
-          <span>🖱️ Drag & drop segmented entities here</span>
+          <button
+            id="tool-paint-btn"
+            class="toolbar-btn"
+            title="Paint Mask"
+            aria-label="Paint Mask"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 20c2.5 0 4-1 5-2l8.5-8.5a2.2 2.2 0 0 0-3.1-3.1L5.9 14.9C5 15.8 4 17.5 4 20z" />
+              <path d="M13 6l5 5" />
+            </svg>
+          </button>
+
+          <button
+            id="tool-label-btn"
+            class="toolbar-btn"
+            title="Edit Label"
+            aria-label="Edit Label"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 19.5V15l10-10 4.5 4.5-10 10H4z" />
+              <path d="M13 6l4.5 4.5" />
+            </svg>
+          </button>
+
+          <button
+            id="tool-layer-btn"
+            class="toolbar-btn"
+            title="Layer Menu"
+            aria-label="Layer Menu"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 5l7 4-7 4-7-4 7-4z" />
+              <path d="M5 13l7 4 7-4" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Right actions -->
+        <div class="toolbar-group">
+          <button
+            id="collect-buffer-btn"
+            class="toolbar-btn"
+            title="Add to Buffer"
+            aria-label="Add to Buffer"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 7h16" />
+              <path d="M6 11h8" />
+              <path d="M6 15h8" />
+              <path d="M17 10v6" />
+              <path d="M14 13h6" />
+            </svg>
+          </button>
+
+          <button
+            id="export-mask-btn"
+            class="toolbar-btn"
+            title="Export Mask"
+            aria-label="Export Mask"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 12c3-5 13-5 16 0-3 5-13 5-16 0z" />
+              <circle cx="12" cy="12" r="2.2" />
+            </svg>
+          </button>
+
+          <button
+            id="export-composite-btn"
+            class="toolbar-btn"
+            title="Export Composite"
+            aria-label="Export Composite"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="4" y="5" width="10" height="10" rx="2" />
+              <rect x="10" y="9" width="10" height="10" rx="2" />
+            </svg>
+          </button>
+
+          <span class="toolbar-divider" />
+
+          <button
+            id="clear-canvas-btn"
+            class="toolbar-btn toolbar-btn--danger"
+            title="Clear Canvas"
+            aria-label="Clear Canvas"
+          >
+            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 7h16" />
+              <path d="M9 7V5h6v2" />
+              <path d="M7 7l1 12h8l1-12" />
+              <path d="M10 11v5M14 11v5" />
+            </svg>
+          </button>
         </div>
       </div>
+    </div>
 
-      <!-- 清空按钮：只保留ID，无Vue事件 -->
-      <div class="mt-2 flex gap-2">
-        <button 
-          id="clear-canvas-btn"
-          class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
-        >
-          Clear All
-        </button>
+    <!-- Canvas -->
+    <div class="board-shell">
+      <div
+        id="drawing-board"
+        class="drawing-board"
+        :style="boardSurfaceStyle"
+      >
+        <div class="canvas-placeholder absolute inset-0 flex items-center justify-center text-gray-300">
+          <svg viewBox="0 0 24 24" class="w-7 h-7 opacity-70" fill="none" stroke="currentColor" stroke-width="1.7">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M8 12h8M12 8v8" />
+          </svg>
+        </div>
       </div>
     </div>
+
   </aside>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
-// 导入独立的拖拽处理函数
-import { initCanvasDrag } from '@/lib/canvasDrag.js';
+import { computed, onMounted, ref } from 'vue'
+import { initCanvasDrag } from '@/lib/canvasDrag.js'
 
-// 组件挂载后初始化拖拽监听（去掉setTimeout，直接执行）
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+const previewScale = ref(1)
+
+const boardSurfaceStyle = computed(() => {
+  const scale = clamp(previewScale.value, 0.75, 2.2)
+  const dotGap = clamp(18 * scale, 14, 30)
+  const dotSize = clamp(1.45 * scale, 1.1, 2.6)
+  const dotAlpha = clamp(0.10 + (scale - 1) * 0.03, 0.08, 0.17)
+
+  return {
+    '--board-dot-gap': `${dotGap}px`,
+    '--board-dot-size': `${dotSize}px`,
+    '--board-dot-alpha': `${dotAlpha}`,
+  } as Record<string, string>
+})
+
+defineExpose({
+  setPreviewScale(scale: number) {
+    previewScale.value = clamp(scale, 0.75, 2.2)
+  },
+})
+
 onMounted(() => {
-  initCanvasDrag();
-});
+  initCanvasDrag()
+})
 </script>
 
 <style scoped>
-#drawing-board {
+.mask-pane-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+/* ===== Toolbar ===== */
+.toolbar-shell {
+  flex: 0 0 auto;
+  padding: 2px 2px 10px;
+}
+
+.toolbar-bar {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.05),
+    0 8px 20px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(10px);
+  box-sizing: border-box;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toolbar-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.12s ease;
+}
+
+.toolbar-btn:hover {
+  background: #ffffff;
+  border-color: #d1d5db;
+  color: #374151;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.toolbar-btn:active {
+  transform: translateY(0.5px);
+}
+
+.toolbar-btn.is-active {
+  background: #ffffff;
+  border-color: #d9dee7;
+  color: #111827;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.toolbar-btn--danger:hover {
+  background: #fff7f7;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: #e5e7eb;
+  margin: 0 6px;
+}
+
+.toolbar-icon {
+  width: 15px;
+  height: 15px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ===== Main board ===== */
+.board-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 2px;
+  display: flex;
+}
+
+.drawing-board {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 300px;
+  border-radius: 14px;
+  overflow: hidden;
   user-select: none;
+  outline: none !important;
+  border: 0 !important;
+  background-color: #ffffff;
+  background-image:
+    radial-gradient(
+      circle,
+      rgba(148, 163, 184, calc(var(--board-dot-alpha) + 0.03)) 1.4px,
+      transparent 1.5px
+    );
+  background-size: var(--board-dot-gap) var(--board-dot-gap);
+  background-position: center center;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.04),
+    0 8px 18px rgba(15, 23, 42, 0.05);
 }
-/* 拖拽进入时高亮样式 */
+
+.drawing-board::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.03);
+  border-radius: inherit;
+}
+
 #drawing-board.dragover {
-  border-color: #3B82F6 !important;
-  background-color: rgba(59, 130, 246, 0.05) !important;
+  outline: none !important;
+  border: 0 !important;
+  background-color: #ffffff !important;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.04),
+    0 8px 18px rgba(15, 23, 42, 0.05) !important;
 }
+
+#drawing-board img,
+#drawing-board canvas {
+  outline: none !important;
+}
+
 #drawing-board img:hover {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.18);
 }
+
 .canvas-placeholder {
   user-select: none;
+  transition: opacity 0.2s ease;
 }
-/* 有图片时隐藏占位提示 */
+
 #drawing-board:has(img) .canvas-placeholder {
   display: none;
 }
 
-#canvas-drag-container {
-  margin-top: 8px;
-  user-select: none;
-}
-#canvas-drag-container img {
-  pointer-events: none; /* 避免图片拦截拖拽事件 */
-}
 
 </style>

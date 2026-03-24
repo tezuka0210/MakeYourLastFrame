@@ -159,110 +159,6 @@ body {
 }
 
 /* ===================== 时间轴 & 拼接区域 ===================== */
-/* =============== Transport strip (buffer above timeline) =============== */
-
-#buffer-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  /* 让上方有足够高度，按钮和卡片都不被裁掉 */
-  padding: 8px 0 8px;
-
-  min-height: 72px;
-  max-height: 72px;
-
-  overflow-x: auto;
-  overflow-y: hidden;   /* ✅ buffer 整行高度固定，不会抖动 */
-
-  box-sizing: border-box;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.buffer-item {
-  overflow: visible;
-  position: relative;
-  width: 80px;
-  height: 56px;
-  border-radius: 6px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  flex-shrink: 0;
-  cursor: grab;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    box-shadow 0.15s ease-out,
-    border-color 0.15s ease-out;
-    /* ❌ 不再对 transform 做过渡，彻底避免上下位移 */
-}
-
-/* 缩略图：刚好填满卡片 */
-.buffer-item img,
-.buffer-item video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  border-radius: 4px;
-}
-
-/* buffer 底部的数据条 */
-.buffer-meta {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
-  height: 16px;
-  border-radius: 999px;
-  padding: 0 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #ffffff;
-  pointer-events: none;
-  white-space: nowrap;
-  z-index: 0;
-}
-
-/* 三种类型的色系 */
-.buffer-item--image {
-  border: 2px solid var(--media-image);
-  background: color-mix(in srgb, var(--media-image) 16%, #ffffff);
-}
-.buffer-item--image .buffer-meta {
-  background: var(--media-image);
-}
-
-.buffer-item--video {
-  border: 2px solid var(--media-video);
-  background: color-mix(in srgb, var(--media-video) 16%, #ffffff);
-}
-.buffer-item--video .buffer-meta {
-  background: var(--media-video);
-}
-
-.buffer-item--audio {
-  border: 2px solid var(--media-audio);
-  background: color-mix(in srgb, var(--media-audio) 16%, #ffffff);
-}
-.buffer-item--audio .buffer-meta {
-  background: var(--media-audio);
-}
-
-/* hover 只改颜色和阴影，不再位移 → 没有 y 抖动 */
-.buffer-item:hover {
-  border-color: #cbd5f5;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
-}
-
-.buffer-placeholder {
-  font-size: 11px;
-  color: #9ca3af;
-  font-style: italic;
-}
 
 
 /* 外层容器：留出内边距，避免贴边 */
@@ -308,7 +204,8 @@ body {
   /* height: 46px; */
   display: flex;
   align-items: center;
-  border-top: 1px solid #d1d5db !important; /* 灰色，与系统默认一致 */
+  /* border-top: 1px solid #d1d5db !important;  */
+  /* 灰色，与系统默认一致 */
   margin-top: 8px;
   background: transparent !important;
 }

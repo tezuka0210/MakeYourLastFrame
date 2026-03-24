@@ -102,7 +102,7 @@ export function useStitching(props, emit) {
       container.style.width = timelineWidth + 'px'
       container.style.height = height + 'px'
       container.style.position = 'relative'
-      container.style.background = '#fafafa'
+      // container.style.background = '#fafafa'
       // 关键：允许 0.0s 文字向左“溢出”而不被裁掉
       container.style.overflow = 'visible'
 
@@ -256,8 +256,8 @@ export function useStitching(props, emit) {
         sel.style.width = `${x2 - x1}px`
         sel.style.top = '0'
         sel.style.bottom = '0'
-        sel.style.background = 'rgba(59,130,246,0.15)'
-        sel.style.border = '1px solid rgba(37,99,235,0.8)'
+        sel.style.background = 'rgba(148,163,184,0.12)'
+        sel.style.border = '1px solid rgba(148,163,184,0.45)'
         sel.style.pointerEvents = 'none'
         container.appendChild(sel)
       }
