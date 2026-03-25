@@ -312,14 +312,14 @@ onMounted(() => {
   cursor: grabbing;
 }
 
-#drawing-board.dragover {
+/* #drawing-board.dragover {
   outline: none !important;
   border: 0 !important;
   background-color: #ffffff !important;
   box-shadow:
     0 0 0 1px rgba(15, 23, 42, 0.04),
     0 8px 18px rgba(15, 23, 42, 0.05) !important;
-}
+} */
 
 #drawing-board img,
 #drawing-board canvas {

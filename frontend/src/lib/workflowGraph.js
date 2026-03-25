@@ -3226,6 +3226,28 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
     // 这样 workflow 节点能立即显示并参与后续 agent / workflow 逻辑
   })
 
+  function createTransparentDragImage() {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    return canvas
+  }
+
+  function buildWorkflowImageDragPayload(url) {
+    return {
+      __dragSource: 'workflow',
+      type: 'image',
+      url,
+      imageUrl: url,
+      mediaUrl: url,
+      originalUrl: url,
+      fullUrl: url,
+      thumbnailUrl: url,
+      name: 'workflow-image',
+      filename: 'workflow-image'
+    }
+  }  
+
   // ========== 辅助函数：DataURL转Blob ==========
   function dataURLToBlob(dataURL) {
     const arr = dataURL.split(',');
@@ -3255,27 +3277,55 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
         .text('Click + to upload reference images for this plan.')
       return
     }
-
     previewImages.forEach(url => {
       const wrapper = previewRow.append('xhtml:div')
         .style('flex', '0 0 auto')
         .style('height', '100%')
         .style('border-radius', '4px')
         .style('overflow', 'hidden')
+        .style('background', 'transparent')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
         .on('mousedown', ev => ev.stopPropagation())
         .on('click', ev => {
           ev.stopPropagation()
           emit('open-preview', url, 'image')
         })
 
-      wrapper.append('xhtml:img')
+      const img = wrapper.append('xhtml:img')
         .attr('src', url)
         .attr('alt', 'Input image')
+        .attr('draggable', true)
         .style('height', '100%')
         .style('width', 'auto')
-        .style('object-fit', 'cover')
+        .style('object-fit', 'contain')
         .style('display', 'block')
+        .style('background', 'transparent')
+        .style('background-color', 'transparent')
+        .style('cursor', 'grab')
+
+      img.on('dragstart', function (ev) {
+        ev.stopPropagation()
+
+        const payload = buildWorkflowImageDragPayload(url)
+        const json = JSON.stringify(payload)
+
+        ev.dataTransfer.effectAllowed = 'copy'
+        ev.dataTransfer.setData('application/json', json)
+        ev.dataTransfer.setData('text/plain', json)
+        ev.dataTransfer.setData('text/uri-list', url)
+
+        // 关键：不要让浏览器自动截图预览区背景
+        const transparentImg = createTransparentDragImage()
+        ev.dataTransfer.setDragImage(transparentImg, 0, 0)
+      })
+
+      img.on('dragend', function () {
+        d3.select(this).style('cursor', 'grab')
+      })
     })
+
   }
 
   renderPreview()

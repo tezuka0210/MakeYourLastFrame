@@ -106,7 +106,22 @@ export function initCanvasDrag() {
   const REGION_GRIP_HEIGHT = 20;
 
   let lastDragData = null;
+  let boardDragDepth = 0;
 
+  function setBoardDragVisual(active) {
+    // 你现在不想要蓝色背景，所以这里直接禁用 dragover 视觉
+    drawingBoard.classList.toggle('dragover', false);
+
+    if (!active) {
+      drawingBoard.classList.remove('dragover');
+      applyBoardCamera();
+    }
+  }
+
+  function resetBoardDragState() {
+    boardDragDepth = 0;
+    setBoardDragVisual(false);
+  }
   const API_BASE = window.API_BASE || '';
 
   function clamp(value, min, max) {
@@ -1982,8 +1997,7 @@ export function initCanvasDrag() {
       syncToolbarState();
       syncBoardContentState();
 
-      drawingBoard.classList.remove('dragover');
-      applyBoardCamera();
+      resetBoardDragState();
     };
   }
 
@@ -2104,46 +2118,63 @@ export function initCanvasDrag() {
       e.preventDefault();
     });
 
-    drawingBoard.addEventListener('dragover', e => {
-      e.preventDefault();
-      drawingBoard.classList.add('dragover');
-    });
+  drawingBoard.addEventListener('dragenter', e => {
+    e.preventDefault();
+    boardDragDepth += 1;
+    setBoardDragVisual(true);
+  });
 
-    drawingBoard.addEventListener('dragleave', () => {
-      drawingBoard.classList.remove('dragover');
-    });
+  drawingBoard.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+    setBoardDragVisual(true);
+  });
 
-    drawingBoard.addEventListener('drop', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      drawingBoard.classList.remove('dragover');
+  drawingBoard.addEventListener('dragleave', e => {
+    e.preventDefault();
 
-      const data = extractDragData(e);
-      if (!data || !data.url) {
-        console.warn('drop 没拿到有效图片地址', e.dataTransfer?.types);
-        return;
-      }
+    boardDragDepth = Math.max(0, boardDragDepth - 1);
 
-      const scenePoint = screenToScene(e.clientX, e.clientY);
-      const x = scenePoint.x - 50;
-      const y = scenePoint.y - 50;
+    // 只有真正离开 board 才重置
+    const related = e.relatedTarget;
+    if (!drawingBoard.contains(related) && boardDragDepth === 0) {
+      resetBoardDragState();
+    }
+  });
 
-      const resolvedUrl = resolveDroppedImageUrl(data);
-      if (!resolvedUrl) {
-        console.error('无有效图片地址:', data);
-        return;
-      }
+  drawingBoard.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    resetBoardDragState();
 
-      const img = new Image();
-      img.onload = () => {
-        createImageItem(img, { ...data, url: resolvedUrl }, x, y);
-      };
-      img.onerror = () => {
-        console.error('图片加载失败:', resolvedUrl);
-      };
-      img.src = resolvedUrl;
-      
-    });
+    const data = extractDragData(e);
+    if (!data || !data.url) {
+      console.warn('drop 没拿到有效图片地址', e.dataTransfer?.types);
+      return;
+    }
+
+    const scenePoint = screenToScene(e.clientX, e.clientY);
+    const x = scenePoint.x - 50;
+    const y = scenePoint.y - 50;
+
+    const resolvedUrl = resolveDroppedImageUrl(data);
+    if (!resolvedUrl) {
+      console.error('无有效图片地址:', data);
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      createImageItem(img, { ...data, url: resolvedUrl }, x, y);
+      applyBoardCamera();
+    };
+    img.onerror = () => {
+      console.error('图片加载失败:', resolvedUrl);
+    };
+    img.src = resolvedUrl;
+  });
 
     drawingBoard.addEventListener('mousedown', e => {
       if (!drawSubCanvasMode) return;
@@ -2469,6 +2500,19 @@ export function initCanvasDrag() {
         removeRegionItem(activeRegion);
       }
     });
+
+    document.addEventListener('dragend', () => {
+      resetBoardDragState();
+    }, true);
+
+    document.addEventListener('drop', () => {
+      resetBoardDragState();
+    }, true);
+
+    window.addEventListener('blur', () => {
+      resetBoardDragState();
+    });
+
   }
 
   function initTools() {
