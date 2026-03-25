@@ -46,7 +46,7 @@
               <path d="M13 6l5 5" />
             </svg>
           </button>
-          <button
+          <!-- <button
             id="tool-layer-btn"
             class="toolbar-btn"
             title="Layer Menu"
@@ -56,7 +56,7 @@
               <path d="M12 5l7 4-7 4-7-4 7-4z" />
               <path d="M5 13l7 4 7-4" />
             </svg>
-          </button>
+          </button> -->
         </div>
 
         <!-- Right actions -->

@@ -90,16 +90,20 @@ export function initCanvasDrag() {
 
   let paintLastScenePoint = null;
   let paintLastBoardPoint = null;
+  let activePaintStroke = null;
 
   // 这个尺寸可以继续加大，基本够用了
   const SAFE_MASK_SCENE_MAX = 4096;
   let MASK_SCENE_SIZE = 4096;
   let MASK_SCENE_ORIGIN = MASK_SCENE_SIZE / 2;
+  const BRUSH_SIZE_MIN = 2;
+  const BRUSH_SIZE_MAX = 48;
+  const BRUSH_SIZE_STEP = 2;
   let brushSize = 10;
 
   let regionColor = '#4b5563';
   let paintColor = '#5f96db';
-  let activeColorPicker = null;
+  let activeColorPicker = null;  
 
   const DELETE_HANDLE_DELAY = 1500;
   const DELETE_HANDLE_HIDE_DELAY = 180;
@@ -393,6 +397,119 @@ export function initCanvasDrag() {
     maskCtx.stroke();
   }  
 
+  function beginPaintStroke(scenePoint, boardPoint) {
+    const sessionCanvas = document.createElement('canvas');
+    sessionCanvas.width = MASK_SCENE_SIZE;
+    sessionCanvas.height = MASK_SCENE_SIZE;
+
+    const sessionCtx = sessionCanvas.getContext('2d');
+    sessionCtx.imageSmoothingEnabled = true;
+    sessionCtx.imageSmoothingQuality = 'high';
+
+    activePaintStroke = {
+      canvas: sessionCanvas,
+      ctx: sessionCtx,
+      minX: scenePoint.x,
+      minY: scenePoint.y,
+      maxX: scenePoint.x,
+      maxY: scenePoint.y
+    };
+
+    paintStrokeDot(activePaintStroke, scenePoint, boardPoint);
+  }
+
+  function expandPaintStrokeBounds(stroke, scenePoint, radius) {
+    stroke.minX = Math.min(stroke.minX, scenePoint.x - radius);
+    stroke.minY = Math.min(stroke.minY, scenePoint.y - radius);
+    stroke.maxX = Math.max(stroke.maxX, scenePoint.x + radius);
+    stroke.maxY = Math.max(stroke.maxY, scenePoint.y + radius);
+  }
+
+  function paintStrokeDot(stroke, scenePoint, boardPoint) {
+    const sceneBrushSize = getSceneBrushSize();
+    const radius = sceneBrushSize / 2;
+    const sceneBufferPoint = sceneToMaskBufferPoint(scenePoint.x, scenePoint.y);
+
+    stroke.ctx.beginPath();
+    stroke.ctx.arc(sceneBufferPoint.x, sceneBufferPoint.y, radius, 0, Math.PI * 2);
+    stroke.ctx.fillStyle = paintColor;
+    stroke.ctx.fill();
+
+    expandPaintStrokeBounds(stroke, scenePoint, radius);
+
+    maskCtx.beginPath();
+    maskCtx.arc(boardPoint.x, boardPoint.y, brushSize / 2, 0, Math.PI * 2);
+    maskCtx.fillStyle = paintColor;
+    maskCtx.fill();
+  }
+
+  function paintStrokeSegment(stroke, fromScene, toScene, fromBoard, toBoard) {
+    const sceneBrushSize = getSceneBrushSize();
+    const radius = sceneBrushSize / 2;
+
+    const p0 = sceneToMaskBufferPoint(fromScene.x, fromScene.y);
+    const p1 = sceneToMaskBufferPoint(toScene.x, toScene.y);
+
+    stroke.ctx.beginPath();
+    stroke.ctx.moveTo(p0.x, p0.y);
+    stroke.ctx.lineTo(p1.x, p1.y);
+    stroke.ctx.lineWidth = sceneBrushSize;
+    stroke.ctx.lineCap = 'round';
+    stroke.ctx.lineJoin = 'round';
+    stroke.ctx.strokeStyle = paintColor;
+    stroke.ctx.stroke();
+
+    expandPaintStrokeBounds(stroke, fromScene, radius);
+    expandPaintStrokeBounds(stroke, toScene, radius);
+
+    maskCtx.beginPath();
+    maskCtx.moveTo(fromBoard.x, fromBoard.y);
+    maskCtx.lineTo(toBoard.x, toBoard.y);
+    maskCtx.lineWidth = brushSize;
+    maskCtx.lineCap = 'round';
+    maskCtx.lineJoin = 'round';
+    maskCtx.strokeStyle = paintColor;
+    maskCtx.stroke();
+  }
+
+  function commitPaintStrokeToItem() {
+    if (!activePaintStroke) {
+      clearViewportMask();
+      return;
+    }
+
+    const stroke = activePaintStroke;
+    activePaintStroke = null;
+
+    try {
+      const left = Math.floor(stroke.minX);
+      const top = Math.floor(stroke.minY);
+      const right = Math.ceil(stroke.maxX);
+      const bottom = Math.ceil(stroke.maxY);
+
+      const width = Math.max(1, right - left);
+      const height = Math.max(1, bottom - top);
+
+      const srcX = Math.round(left + MASK_SCENE_ORIGIN);
+      const srcY = Math.round(top + MASK_SCENE_ORIGIN);
+
+      const cropped = document.createElement('canvas');
+      cropped.width = width;
+      cropped.height = height;
+
+      const croppedCtx = cropped.getContext('2d');
+      croppedCtx.drawImage(
+        stroke.canvas,
+        srcX, srcY, width, height,
+        0, 0, width, height
+      );
+
+      createMaskItem(cropped, left, top);
+    } finally {
+      clearViewportMask();
+    }
+  }
+
   function syncBoardContentState() {
     drawingBoard.classList.toggle('has-content', droppedImages.length > 0);
   }
@@ -617,14 +734,15 @@ export function initCanvasDrag() {
   }
 
   function setImagePosition(img, x, y) {
+    const item = getItemByElement(img);
+
     img.dataset.x = String(x);
     img.dataset.y = String(y);
-    img.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 
-    const item = getItemByElement(img);
     if (item) {
-      updateLabelPosition(item);
-      updateDeleteHandlePosition(item);
+      applyItemTransform(item);
+    } else {
+      img.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     }
   }
 
@@ -633,6 +751,41 @@ export function initCanvasDrag() {
       x: parseFloat(img.dataset.x || '0'),
       y: parseFloat(img.dataset.y || '0')
     };
+  }
+
+  function getItemSize(item) {
+    if (!item?.element) return { w: 0, h: 0 };
+
+    return {
+      w: item.element.offsetWidth || item.element.width || item.width || 0,
+      h: item.element.offsetHeight || item.element.height || item.height || 0
+    };
+  }
+
+  function applyItemTransform(item) {
+    if (!item?.element) return;
+
+    const pos = getImagePosition(item.element);
+    const { w, h } = getItemSize(item);
+
+    const flipX = item.flipX ? -1 : 1;
+    const flipY = item.flipY ? -1 : 1;
+
+    const tx = item.flipX ? pos.x + w : pos.x;
+    const ty = item.flipY ? pos.y + h : pos.y;
+
+    item.element.style.transformOrigin = 'top left';
+    item.element.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${flipX}, ${flipY})`;
+
+    updateLabelPosition(item);
+    updateDeleteHandlePosition(item);
+  }
+
+  function setSceneItemPosition(item, x, y) {
+    if (!item?.element) return;
+    item.element.dataset.x = String(x);
+    item.element.dataset.y = String(y);
+    applyItemTransform(item);
   }
 
   function clampImagePosition(img, x, y) {
@@ -727,6 +880,78 @@ export function initCanvasDrag() {
     return value.toLowerCase();
   }
 
+  function hexToRgb(hex) {
+    const normalized = normalizeHexColor(hex);
+    return {
+      r: parseInt(normalized.slice(1, 3), 16),
+      g: parseInt(normalized.slice(3, 5), 16),
+      b: parseInt(normalized.slice(5, 7), 16)
+    };
+  }
+
+  function rgbToHex(r, g, b) {
+    const toHex = (v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  function rgbToHsv(r, g, b) {
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const d = max - min;
+
+    let h = 0;
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+
+    if (d !== 0) {
+      switch (max) {
+        case rn:
+          h = ((gn - bn) / d) % 6;
+          break;
+        case gn:
+          h = (bn - rn) / d + 2;
+          break;
+        case bn:
+          h = (rn - gn) / d + 4;
+          break;
+      }
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+
+    return { h, s, v };
+  }
+
+  function hsvToRgb(h, s, v) {
+    const c = v * s;
+    const hh = (h % 360) / 60;
+    const x = c * (1 - Math.abs((hh % 2) - 1));
+
+    let r1 = 0;
+    let g1 = 0;
+    let b1 = 0;
+
+    if (hh >= 0 && hh < 1) [r1, g1, b1] = [c, x, 0];
+    else if (hh >= 1 && hh < 2) [r1, g1, b1] = [x, c, 0];
+    else if (hh >= 2 && hh < 3) [r1, g1, b1] = [0, c, x];
+    else if (hh >= 3 && hh < 4) [r1, g1, b1] = [0, x, c];
+    else if (hh >= 4 && hh < 5) [r1, g1, b1] = [x, 0, c];
+    else [r1, g1, b1] = [c, 0, x];
+
+    const m = v - c;
+
+    return {
+      r: Math.round((r1 + m) * 255),
+      g: Math.round((g1 + m) * 255),
+      b: Math.round((b1 + m) * 255)
+    };
+  }
+
+
   function applyRegionStyle(el, { temp = false } = {}) {
     if (!el) return;
 
@@ -760,77 +985,382 @@ export function initCanvasDrag() {
   function destroyActiveColorPicker() {
     if (!activeColorPicker) return;
 
-    activeColorPicker.remove();
+    const { el, onPointerDown, onResize } = activeColorPicker;
+
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    window.removeEventListener('resize', onResize);
+
+    if (el?.parentNode) {
+      el.parentNode.removeChild(el);
+    }
+
     activeColorPicker = null;
   }
 
   function openToolbarColorPicker(kind, anchorEl) {
     if (!anchorEl) return;
 
+    const isSamePickerOpen =
+      activeColorPicker &&
+      activeColorPicker.kind === kind &&
+      activeColorPicker.anchorEl === anchorEl;
+
+    if (isSamePickerOpen) {
+      destroyActiveColorPicker();
+      return;
+    }
+
     destroyActiveColorPicker();
 
-    const rect = anchorEl.getBoundingClientRect();
+    const currentColor = kind === 'region' ? regionColor : paintColor;
+    let hsv = rgbToHsv(...Object.values(hexToRgb(currentColor)));
 
-    const picker = document.createElement('input');
-    picker.type = 'color';
-    picker.value = kind === 'region' ? regionColor : paintColor;
-
-    const pickerSize = 28;
-    const left = Math.round(rect.right - pickerSize);
-    const top = Math.round(rect.bottom + 4);
-
-    picker.style.cssText = `
+    const panel = document.createElement('div');
+    panel.style.cssText = `
       position: fixed;
-      left: ${left}px;
-      top: ${top}px;
-      width: ${pickerSize}px;
-      height: ${pickerSize}px;
-      opacity: 0.01;
-      pointer-events: none;
       z-index: 2147483647;
-      padding: 0;
-      border: 0;
-      outline: none;
+      width: 248px;
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.98);
+      border: 1px solid rgba(203,213,225,0.95);
+      box-shadow:
+        0 0 0 1px rgba(15,23,42,0.04),
+        0 12px 28px rgba(15,23,42,0.12);
+      backdrop-filter: blur(10px);
+      box-sizing: border-box;
+      user-select: none;
     `;
 
-    document.body.appendChild(picker);
-    activeColorPicker = picker;
+    const title = document.createElement('div');
+    title.textContent = kind === 'paint' ? 'Paint Settings' : 'Region Color';
+    title.style.cssText = `
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 8px;
+      line-height: 1;
+    `;
+    panel.appendChild(title);
 
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
+    let minusBtn = null;
+    let plusBtn = null;
+    let brushValueEl = null;
+    let brushDotEl = null;
 
-      setTimeout(() => {
-        if (activeColorPicker === picker) {
-          destroyActiveColorPicker();
-        } else if (picker.parentNode) {
-          picker.remove();
-        }
-      }, 0);
+    if (kind === 'paint') {
+      const brushRow = document.createElement('div');
+      brushRow.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 10px;
+        padding: 6px;
+        border-radius: 999px;
+        background: rgba(248,250,252,0.92);
+        border: 1px solid rgba(203,213,225,0.9);
+      `;
+
+      const makeBtn = (label) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.style.cssText = `
+          width: 26px;
+          height: 26px;
+          border: none;
+          border-radius: 999px;
+          background: transparent;
+          color: #475569;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 16px;
+          line-height: 1;
+          cursor: pointer;
+        `;
+        btn.onmouseenter = () => {
+          if (!btn.disabled) btn.style.background = '#ffffff';
+        };
+        btn.onmouseleave = () => {
+          btn.style.background = 'transparent';
+        };
+        return btn;
+      };
+
+      minusBtn = makeBtn('−');
+      plusBtn = makeBtn('+');
+
+      const readout = document.createElement('div');
+      readout.style.cssText = `
+        flex: 1;
+        height: 28px;
+        padding: 0 10px 0 8px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        background: #ffffff;
+        border: 1px solid rgba(203,213,225,0.95);
+        box-sizing: border-box;
+        color: #334155;
+        font-size: 11px;
+        font-weight: 700;
+      `;
+
+      brushDotEl = document.createElement('span');
+      brushDotEl.style.cssText = `
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: ${paintColor};
+        flex: 0 0 auto;
+        box-shadow: 0 0 0 1px rgba(15,23,42,0.08);
+      `;
+
+      brushValueEl = document.createElement('span');
+      brushValueEl.style.cssText = `
+        min-width: 18px;
+        text-align: center;
+        line-height: 1;
+      `;
+      brushValueEl.textContent = String(brushSize);
+
+      minusBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        adjustBrushSize(-BRUSH_SIZE_STEP);
+      };
+
+      plusBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        adjustBrushSize(BRUSH_SIZE_STEP);
+      };
+
+      readout.appendChild(brushDotEl);
+      readout.appendChild(brushValueEl);
+
+      brushRow.appendChild(minusBtn);
+      brushRow.appendChild(readout);
+      brushRow.appendChild(plusBtn);
+
+      panel.appendChild(brushRow);
+    }
+
+    const svArea = document.createElement('div');
+    svArea.style.cssText = `
+      position: relative;
+      width: 100%;
+      height: 136px;
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: crosshair;
+      margin-bottom: 10px;
+      background:
+        linear-gradient(to top, #000, transparent),
+        linear-gradient(to right, #fff, hsl(${hsv.h}, 100%, 50%));
+    `;
+
+    const svHandle = document.createElement('div');
+    svHandle.style.cssText = `
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 0 1px rgba(15,23,42,0.35);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    `;
+    svArea.appendChild(svHandle);
+
+    const hueArea = document.createElement('div');
+    hueArea.style.cssText = `
+      position: relative;
+      width: 100%;
+      height: 14px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+      background: linear-gradient(
+        to right,
+        #ff0000,
+        #ffff00,
+        #00ff00,
+        #00ffff,
+        #0000ff,
+        #ff00ff,
+        #ff0000
+      );
+      cursor: ew-resize;
+    `;
+
+    const hueHandle = document.createElement('div');
+    hueHandle.style.cssText = `
+      position: absolute;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 0 1px rgba(15,23,42,0.3);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    `;
+    hueArea.appendChild(hueHandle);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+
+    const previewEl = document.createElement('div');
+    previewEl.style.cssText = `
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid rgba(203,213,225,0.95);
+      background: ${currentColor};
+      flex: 0 0 auto;
+    `;
+
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.value = currentColor;
+    hexInput.style.cssText = `
+      flex: 1;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid rgba(203,213,225,0.95);
+      padding: 0 10px;
+      font-size: 12px;
+      color: #334155;
+      outline: none;
+      box-sizing: border-box;
+      background: #ffffff;
+    `;
+
+    footer.appendChild(previewEl);
+    footer.appendChild(hexInput);
+
+    panel.appendChild(svArea);
+    panel.appendChild(hueArea);
+    panel.appendChild(footer);
+
+    document.body.appendChild(panel);
+
+    const applyFromHSV = () => {
+      const { r, g, b } = hsvToRgb(hsv.h, hsv.s, hsv.v);
+      const hex = rgbToHex(r, g, b);
+      setToolColor(kind, hex);
     };
 
-    picker.addEventListener('input', () => {
-      setToolColor(kind, picker.value);
-    });
+    const place = () => {
+      const rect = anchorEl.getBoundingClientRect();
+      const panelW = panel.offsetWidth || 248;
+      const panelH = panel.offsetHeight || 230;
 
-    picker.addEventListener('change', () => {
-      setToolColor(kind, picker.value);
-      cleanup();
-    });
+      let left = rect.left + rect.width + 10;
+      let top = rect.bottom + 6;
 
-    picker.addEventListener('blur', () => {
-      cleanup();
-    }, { once: true });
-
-    requestAnimationFrame(() => {
-      try {
-        picker.click();
-      } catch (err) {
-        cleanup();
-        console.error('颜色选择器打开失败:', err);
+      if (left + panelW > window.innerWidth - 8) {
+        left = rect.right - panelW;
       }
+      if (top + panelH > window.innerHeight - 8) {
+        top = rect.top - panelH - 8;
+      }
+
+      left = clamp(left, 8, window.innerWidth - panelW - 8);
+      top = clamp(top, 8, window.innerHeight - panelH - 8);
+
+      panel.style.left = `${Math.round(left)}px`;
+      panel.style.top = `${Math.round(top)}px`;
+    };
+
+    const bindPointerDrag = (el, move) => {
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const onMove = (ev) => {
+          move(ev);
+        };
+
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+        };
+
+        move(e);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
+    };
+
+    bindPointerDrag(svArea, (e) => {
+      const rect = svArea.getBoundingClientRect();
+      const x = clamp(e.clientX - rect.left, 0, rect.width);
+      const y = clamp(e.clientY - rect.top, 0, rect.height);
+
+      hsv.s = rect.width === 0 ? 0 : x / rect.width;
+      hsv.v = rect.height === 0 ? 0 : 1 - y / rect.height;
+
+      applyFromHSV();
     });
+
+    bindPointerDrag(hueArea, (e) => {
+      const rect = hueArea.getBoundingClientRect();
+      const x = clamp(e.clientX - rect.left, 0, rect.width);
+
+      hsv.h = rect.width === 0 ? 0 : (x / rect.width) * 360;
+
+      applyFromHSV();
+    });
+
+    hexInput.addEventListener('change', () => {
+      const normalized = normalizeHexColor(hexInput.value);
+      const rgb = hexToRgb(normalized);
+      hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+      setToolColor(kind, normalized);
+    });
+
+    const onPointerDown = (e) => {
+      if (panel.contains(e.target) || anchorEl.contains(e.target)) return;
+      destroyActiveColorPicker();
+    };
+
+    const onResize = () => {
+      if (!activeColorPicker) return;
+      place();
+      updateActiveColorPickerUI();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('resize', onResize);
+
+    activeColorPicker = {
+      kind,
+      anchorEl,
+      el: panel,
+      previewEl,
+      hexInput,
+      svArea,
+      svHandle,
+      hueArea,
+      hueHandle,
+      brushValueEl,
+      brushDotEl,
+      minusBtn,
+      plusBtn,
+      onPointerDown,
+      onResize
+    };
+
+    place();
+    updateActiveColorPickerUI();
   }
 
   function setToolbarButtonAccent(btn, color) {
@@ -848,6 +1378,8 @@ export function initCanvasDrag() {
       paintColor = normalized;
       updateToolbarColorIndicators();
     }
+
+    updateActiveColorPickerUI();
   }
 
   function updateToolbarColorIndicators() {
@@ -856,6 +1388,104 @@ export function initCanvasDrag() {
 
     setToolbarButtonAccent(regionBtn, regionColor);
     setToolbarButtonAccent(paintBtn, paintColor);
+  }
+
+  function updateActiveColorPickerUI() {
+    if (!activeColorPicker) return;
+
+    const kind = activeColorPicker.kind;
+    const color = kind === 'region' ? regionColor : paintColor;
+
+    const { previewEl, hexInput, svHandle, hueHandle, svArea, hueArea, brushValueEl, brushDotEl, minusBtn, plusBtn } = activeColorPicker;
+
+    if (previewEl) {
+      previewEl.style.background = color;
+    }
+
+    if (hexInput && document.activeElement !== hexInput) {
+      hexInput.value = color;
+    }
+
+    const { h, s, v } = rgbToHsv(...Object.values(hexToRgb(color)));
+
+    if (svArea) {
+      svArea.style.background = `
+        linear-gradient(to top, #000, transparent),
+        linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))
+      `;
+    }
+
+    if (svHandle) {
+      svHandle.style.left = `${s * 100}%`;
+      svHandle.style.top = `${(1 - v) * 100}%`;
+    }
+
+    if (hueHandle && hueArea) {
+      const hueWidth = hueArea.clientWidth || 180;
+      hueHandle.style.left = `${(h / 360) * hueWidth}px`;
+    }
+
+    if (kind === 'paint') {
+      if (brushValueEl) {
+        brushValueEl.textContent = String(brushSize);
+      }
+
+      if (brushDotEl) {
+        const previewSize = clamp(brushSize, 6, 18);
+        brushDotEl.style.width = `${previewSize}px`;
+        brushDotEl.style.height = `${previewSize}px`;
+        brushDotEl.style.background = paintColor;
+      }
+
+      if (minusBtn) {
+        minusBtn.disabled = brushSize <= BRUSH_SIZE_MIN;
+        minusBtn.style.opacity = minusBtn.disabled ? '0.4' : '1';
+      }
+
+      if (plusBtn) {
+        plusBtn.disabled = brushSize >= BRUSH_SIZE_MAX;
+        plusBtn.style.opacity = plusBtn.disabled ? '0.4' : '1';
+      }
+    }
+  }
+
+  function syncBrushSizeControls() {
+    const group = document.getElementById('tool-paint-size-group');
+    const minusBtn = document.getElementById('tool-paint-decrease-btn');
+    const plusBtn = document.getElementById('tool-paint-increase-btn');
+    const valueEl = document.getElementById('tool-paint-size-value');
+    const dotEl = document.getElementById('tool-paint-size-dot');
+    const indicator = document.getElementById('tool-paint-size-indicator');
+
+    if (!group || !minusBtn || !plusBtn || !valueEl || !dotEl || !indicator) return;
+
+    const canDecrease = brushSize > BRUSH_SIZE_MIN;
+    const canIncrease = brushSize < BRUSH_SIZE_MAX;
+
+    minusBtn.disabled = !canDecrease;
+    plusBtn.disabled = !canIncrease;
+
+    valueEl.textContent = String(brushSize);
+    indicator.setAttribute('aria-valuenow', String(brushSize));
+    indicator.setAttribute('title', `Brush size: ${brushSize}`);
+
+    const previewSize = clamp(brushSize, 6, 16);
+    dotEl.style.width = `${previewSize}px`;
+    dotEl.style.height = `${previewSize}px`;
+    dotEl.style.background = paintColor;
+
+    group.classList.toggle('is-disabled', !paintMode);
+  }
+
+  function setBrushSize(nextSize) {
+    const normalized = clamp(Math.round(nextSize), BRUSH_SIZE_MIN, BRUSH_SIZE_MAX);
+    if (normalized === brushSize) return;
+    brushSize = normalized;
+    updateActiveColorPickerUI();
+  }
+
+  function adjustBrushSize(delta) {
+    setBrushSize(brushSize + delta);
   }
 
   function clearDeleteTimers(owner) {
@@ -927,17 +1557,19 @@ export function initCanvasDrag() {
   function getDeleteAnchor(owner) {
     if (!owner) return { x: 0, y: 0 };
 
-    if (owner.kind === 'image') {
-      const pos = getImagePosition(owner.element);
+    if (owner.kind === 'region') {
       return {
-        x: pos.x + owner.element.offsetWidth,
-        y: pos.y
+        x: owner.x + owner.w,
+        y: owner.y
       };
     }
 
+    const pos = getImagePosition(owner.element);
+    const { w } = getItemSize(owner);
+
     return {
-      x: owner.x + owner.w,
-      y: owner.y
+      x: pos.x + w,
+      y: pos.y
     };
   }
 
@@ -1032,10 +1664,77 @@ export function initCanvasDrag() {
   function removeCanvasOwner(owner) {
     if (!owner) return;
 
-    if (owner.kind === 'image') {
-      removeImageItem(owner);
-    } else if (owner.kind === 'region') {
+    if (owner.kind === 'region') {
       removeRegionItem(owner);
+    } else {
+      removeImageItem(owner);
+    }
+  }
+
+  function bindSceneItemInteractions(item) {
+    const el = item.element;
+
+    el.addEventListener('mouseenter', () => {
+      scheduleDeleteHandleShow(item);
+    });
+
+    el.addEventListener('mouseleave', () => {
+      scheduleDeleteHandleHide(item);
+    });
+
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      selectItem(item);
+      hideLayerMenu();
+    });
+
+    el.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showLayerMenu(ev.clientX, ev.clientY, item);
+    });
+
+    el.addEventListener('dblclick', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      selectItem(item);
+      const text = prompt('Enter item label', item.label || '');
+      if (text !== null) {
+        setItemLabel(item, text);
+      }
+    });
+
+    el.addEventListener('mousedown', ev => {
+      if (paintMode) return;
+      if (ev.button !== 0) return;
+
+      hideDeleteHandle(item, true);
+      selectItem(item);
+
+      dragCandidate = {
+        item,
+        img: el,
+        startMouse: { x: ev.clientX, y: ev.clientY },
+        startPos: getImagePosition(el)
+      };
+    });
+
+    if (item.kind === 'image') {
+      el.addEventListener('wheel', ev => {
+        if (paintMode) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        let scale = parseFloat(el.dataset.scale || '1');
+        scale += ev.deltaY > 0 ? -0.1 : 0.1;
+        scale = clamp(scale, MIN_SCALE, MAX_SCALE);
+
+        el.dataset.scale = String(scale);
+        el.style.width = `${100 * scale}px`;
+
+        const current = getImagePosition(el);
+        setImagePosition(el, current.x, current.y);
+      }, { passive: false });
     }
   }
 
@@ -1106,7 +1805,9 @@ export function initCanvasDrag() {
       deleteBtn: null,
       deleteHovering: false,
       showDeleteTimer: null,
-      hideDeleteTimer: null
+      hideDeleteTimer: null,
+      flipX: false,
+      flipY: false
     };
 
     subCanvases.push(item);
@@ -1170,6 +1871,8 @@ export function initCanvasDrag() {
       { key: 'forward-one', label: 'Bring Forward' },
       { key: 'backward-one', label: 'Send Backward' },
       { key: 'send-back', label: 'Send to Back' },
+      { key: 'flip-horizontal', label: 'Flip Horizontal' },
+      { key: 'flip-vertical', label: 'Flip Vertical' },
       { key: 'edit-label', label: 'Edit Label' }
     ];
 
@@ -1269,6 +1972,18 @@ export function initCanvasDrag() {
       return;
     }
 
+    if (action === 'flip-horizontal') {
+      item.flipX = !item.flipX;
+      applyItemTransform(item);
+      return;
+    }
+
+    if (action === 'flip-vertical') {
+      item.flipY = !item.flipY;
+      applyItemTransform(item);
+      return;
+    }
+
     if (action === 'edit-label') {
       const text = prompt('请输入图片语义标注', item.label || '');
       if (text !== null) {
@@ -1336,30 +2051,49 @@ export function initCanvasDrag() {
   }
 
   async function drawExportItem(ctx, item, clip, scale) {
+    const pos = getImagePosition(item.element);
+    const screenPos = sceneToScreen(pos.x, pos.y);
+    const x = screenPos.x - clip.x;
+    const y = screenPos.y - clip.y;
+
+    const { w, h } = getItemSize(item);
+    const drawW = w * camera.scale;
+    const drawH = h * camera.scale;
+
+    const flipX = item.flipX ? -1 : 1;
+    const flipY = item.flipY ? -1 : 1;
+
+    ctx.save();
+    ctx.translate(
+      x + (item.flipX ? drawW : 0),
+      y + (item.flipY ? drawH : 0)
+    );
+    ctx.scale(flipX, flipY);
+
     try {
-      const renderable = ENABLE_LIGHT_SR
-        ? await buildLightSRSource(item, scale * camera.scale)
-        : await loadImageAsync(item.originalSrc || item.element.src);
+      if (item.kind === 'mask') {
+        ctx.drawImage(item.sourceCanvas || item.element, 0, 0, drawW, drawH);
+      } else {
+        const renderable = ENABLE_LIGHT_SR
+          ? await buildLightSRSource(item, scale * camera.scale)
+          : await loadImageAsync(item.originalSrc || item.element.src);
 
-      const pos = getImagePosition(item.element);
-      const screenPos = sceneToScreen(pos.x, pos.y);
-      const x = screenPos.x - clip.x;
-      const y = screenPos.y - clip.y;
-      const w = item.element.offsetWidth * camera.scale;
-      const h = item.element.offsetHeight * camera.scale;
-
-      ctx.drawImage(renderable, x, y, w, h);
+        ctx.drawImage(renderable, 0, 0, drawW, drawH);
+      }
     } catch (err) {
       console.error('导出图片处理失败:', err);
     }
+
+    ctx.restore();
   }
 
-  async function drawExportItemsInOrder(ctx, items, clip, scale) {
+  async function drawExportItemsInOrder(ctx, items, clip, scale, options = {}) {
     for (const item of items) {
+      if (options.onlyMask && item.kind !== 'mask') continue;
+      if (options.includeMask === false && item.kind === 'mask') continue;
       await drawExportItem(ctx, item, clip, scale);
     }
   }
-
   function createExportCanvas(clip, scale = getRecommendedExportScale()) {
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(clip.w * scale));
@@ -1632,8 +2366,10 @@ export function initCanvasDrag() {
     if (type === 'origin') {
       ctx.clearRect(0, 0, clip.w, clip.h);
       const sortedItems = getSortedItems();
-      await drawExportItemsInOrder(ctx, sortedItems, clip, scale);
-      drawLabelsToCanvas(ctx, sortedItems, clip);
+      await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
+        includeMask: false
+      });
+      drawLabelsToCanvas(ctx, sortedItems.filter(it => it.kind !== 'mask'), clip);
       finish('source', 'Source');
       return;
     }
@@ -1641,15 +2377,9 @@ export function initCanvasDrag() {
     if (type === 'combined') {
       ctx.clearRect(0, 0, clip.w, clip.h);
       const sortedItems = getSortedItems();
-      await drawExportItemsInOrder(ctx, sortedItems, clip, scale);
-
-      if (options.includeMask !== false) {
-        ctx.save();
-        ctx.globalAlpha = 1;
-        drawMaskClipToContext(ctx, clip);
-        ctx.restore();
-      }
-
+      await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
+        includeMask: options.includeMask !== false
+      });
       drawLabelsToCanvas(ctx, sortedItems, clip);
       finish('composite', 'Composite');
       return;
@@ -1658,7 +2388,10 @@ export function initCanvasDrag() {
     if (type === 'mask') {
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, clip.w, clip.h);
-      drawMaskClipToContext(ctx, clip);
+      const sortedItems = getSortedItems();
+      await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
+        onlyMask: true
+      });
       finish('mask', 'Mask');
       return;
     }
@@ -1820,12 +2553,17 @@ export function initCanvasDrag() {
     setToolbarButtonActive(selectBtn, !drawSubCanvasMode && !paintMode);
     setToolbarButtonActive(regionBtn, drawSubCanvasMode);
     setToolbarButtonActive(paintBtn, paintMode);
+
+    syncBrushSizeControls();
   }
 
   function deactivatePaintMode() {
     paintMode = false;
     if (maskCanvas) maskCanvas.style.pointerEvents = 'none';
     drawingBoard.style.cursor = 'default';
+
+    destroyActiveColorPicker();
+
     droppedImages.forEach(i => {
       if (i.element) i.element.style.pointerEvents = 'auto';
     });
@@ -1845,8 +2583,10 @@ export function initCanvasDrag() {
     const selectBtn = document.getElementById('tool-select-btn');
     const regionBtn = document.getElementById('tool-region-btn');
     const paintBtn = document.getElementById('tool-paint-btn');
+    const paintDecreaseBtn = document.getElementById('tool-paint-decrease-btn');
+    const paintIncreaseBtn = document.getElementById('tool-paint-increase-btn');
+    const paintSizeIndicator = document.getElementById('tool-paint-size-indicator');
     const labelBtn = document.getElementById('tool-label-btn');
-    const layerBtn = document.getElementById('tool-layer-btn');
 
     const collectBufferBtn = document.getElementById('collect-buffer-btn');
     const exportSourceBtn = document.getElementById('export-source-btn');
@@ -1899,6 +2639,25 @@ export function initCanvasDrag() {
       });
     }
 
+    if (paintDecreaseBtn) {
+      paintDecreaseBtn.onclick = () => {
+        adjustBrushSize(-BRUSH_SIZE_STEP);
+      };
+    }
+
+    if (paintIncreaseBtn) {
+      paintIncreaseBtn.onclick = () => {
+        adjustBrushSize(BRUSH_SIZE_STEP);
+      };
+    }
+
+    if (paintSizeIndicator) {
+      paintSizeIndicator.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        adjustBrushSize(e.deltaY > 0 ? -BRUSH_SIZE_STEP : BRUSH_SIZE_STEP);
+      }, { passive: false });
+    }
+
     if (labelBtn) {
       labelBtn.onclick = () => {
         if (!currentSelectedItem) return;
@@ -1906,14 +2665,6 @@ export function initCanvasDrag() {
         if (text !== null) {
           setItemLabel(currentSelectedItem, text);
         }
-      };
-    }
-
-    if (layerBtn) {
-      layerBtn.onclick = e => {
-        if (!currentSelectedItem) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        showLayerMenu(rect.left, rect.bottom + 6, currentSelectedItem);
       };
     }
 
@@ -1948,11 +2699,14 @@ export function initCanvasDrag() {
     }
 
     syncToolbarState();
+    syncBrushSizeControls();
   }
 
   function bindClearButton() {
     const btn = document.getElementById('clear-canvas-btn');
     if (!btn) return;
+
+    activePaintStroke = null;
 
     btn.onclick = () => {
       destroyActiveColorPicker();
@@ -2043,7 +2797,9 @@ export function initCanvasDrag() {
       deleteBtn: null,
       deleteHovering: false,
       showDeleteTimer: null,
-      hideDeleteTimer: null
+      hideDeleteTimer: null,
+      flipX: false,
+      flipY: false
     };
 
     droppedImages.push(item);
@@ -2053,69 +2809,67 @@ export function initCanvasDrag() {
     const pos = clampImagePosition(img, x, y);
     setImagePosition(img, pos.x, pos.y);
 
-    img.addEventListener('mouseenter', () => {
-      scheduleDeleteHandleShow(item);
-    });
-
-    img.addEventListener('mouseleave', () => {
-      scheduleDeleteHandleHide(item);
-    });
-
-    img.addEventListener('click', ev => {
-      ev.stopPropagation();
-      selectItem(item);
-      hideLayerMenu();
-    });
-
-    img.addEventListener('contextmenu', ev => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      showLayerMenu(ev.clientX, ev.clientY, item);
-    });
-
-    img.addEventListener('dblclick', ev => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const text = prompt('Enter image label', item.label || '');
-      if (text !== null) {
-        setItemLabel(item, text);
-      }
-    });
-
-    img.addEventListener('mousedown', ev => {
-      if (paintMode) return;
-      if (ev.button !== 0) return;
-
-      hideDeleteHandle(item, true);
-      selectItem(item);
-
-      dragCandidate = {
-        item,
-        img,
-        startMouse: { x: ev.clientX, y: ev.clientY },
-        startPos: getImagePosition(img)
-      };
-    });
-
-    img.addEventListener('wheel', ev => {
-      if (paintMode) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      let scale = parseFloat(img.dataset.scale || '1');
-      scale += ev.deltaY > 0 ? -0.1 : 0.1;
-      scale = clamp(scale, MIN_SCALE, MAX_SCALE);
-
-      img.dataset.scale = String(scale);
-      img.style.width = `${100 * scale}px`;
-
-      const current = getImagePosition(img);
-      setImagePosition(img, current.x, current.y);
-    }, { passive: false });
-
+    bindSceneItemInteractions(item);
     selectItem(item);
   }
 
+  function createMaskItem(sourceCanvas, x, y) {
+    const canvas = document.createElement('canvas');
+    canvas.width = sourceCanvas.width;
+    canvas.height = sourceCanvas.height;
+
+    const cctx = canvas.getContext('2d');
+    cctx.drawImage(sourceCanvas, 0, 0);
+
+    canvas.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      width:${sourceCanvas.width}px;
+      height:${sourceCanvas.height}px;
+      display:block;
+      border:none;
+      border-radius:4px;
+      cursor:grab;
+      z-index:10;
+      user-select:none;
+      will-change:transform;
+      background:transparent;
+      pointer-events:auto;
+    `;
+
+    canvas.dataset.x = '0';
+    canvas.dataset.y = '0';
+
+    drawingScene.appendChild(canvas);
+
+    const item = {
+      kind: 'mask',
+      id: `mask_item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      element: canvas,
+      sourceCanvas: canvas,
+      zIndex: ++layerSeed,
+      label: '',
+      labelEl: null,
+      deleteBtn: null,
+      deleteHovering: false,
+      showDeleteTimer: null,
+      hideDeleteTimer: null,
+      flipX: false,
+      flipY: false
+    };
+
+    droppedImages.push(item);
+    applyItemVisualLayer(item);
+    setSceneItemPosition(item, x, y);
+    bindSceneItemInteractions(item);
+    normalizeLayerOrder();
+    selectItem(item);
+    syncBoardContentState();
+
+    return item;
+  }
+  
   function bindEvents() {
     drawingBoard.addEventListener('contextmenu', e => {
       e.preventDefault();
@@ -2404,22 +3158,23 @@ export function initCanvasDrag() {
     const scenePoint = clientToScenePoint(e.clientX, e.clientY);
     const boardPoint = getBoardPoint(e.clientX, e.clientY);
 
-    paintDot(scenePoint, boardPoint);
+    beginPaintStroke(scenePoint, boardPoint);
 
     paintLastScenePoint = scenePoint;
     paintLastBoardPoint = boardPoint;
   });
 
   maskCanvas.addEventListener('mousemove', e => {
-    if (!isPainting) return;
+    if (!isPainting || !activePaintStroke) return;
 
     const scenePoint = clientToScenePoint(e.clientX, e.clientY);
     const boardPoint = getBoardPoint(e.clientX, e.clientY);
 
     if (!paintLastScenePoint || !paintLastBoardPoint) {
-      paintDot(scenePoint, boardPoint);
+      paintStrokeDot(activePaintStroke, scenePoint, boardPoint);
     } else {
-      paintSegment(
+      paintStrokeSegment(
+        activePaintStroke,
         paintLastScenePoint,
         scenePoint,
         paintLastBoardPoint,
@@ -2432,12 +3187,18 @@ export function initCanvasDrag() {
   });
 
   maskCanvas.addEventListener('mouseup', () => {
+    if (isPainting) {
+      commitPaintStrokeToItem();
+    }
     isPainting = false;
     paintLastScenePoint = null;
     paintLastBoardPoint = null;
   });
 
   maskCanvas.addEventListener('mouseleave', () => {
+    if (isPainting) {
+      commitPaintStrokeToItem();
+    }
     isPainting = false;
     paintLastScenePoint = null;
     paintLastBoardPoint = null;
