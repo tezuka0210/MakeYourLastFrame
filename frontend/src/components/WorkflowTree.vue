@@ -5,7 +5,7 @@
     style="position: relative;"
   >
     <svg ref="svgContainer" class="w-full h-full"></svg>
-    <!-- 框选框（动态生成） -->
+
     <div
       v-if="selecting"
       class="selection-box"
@@ -16,27 +16,116 @@
         height: selectBox.height + 'px'
       }"
     ></div>
+
+    <div
+      v-if="boxSelectMode"
+      style="
+        position:absolute;
+        top:12px;
+        left:12px;
+        z-index:20;
+        padding:8px 12px;
+        border-radius:10px;
+        background:rgba(255,255,255,0.96);
+        border:1px solid #bfdbfe;
+        box-shadow:0 8px 24px rgba(15,23,42,0.08);
+        font-size:12px;
+        color:#1d4ed8;
+        font-weight:600;
+      "
+    >
+      Box Select Mode · Drag on empty canvas to select · Press B or Esc to exit
+    </div>
+
+    <div
+      v-if="selectedIdsForHint.length >= 1"
+      style="
+        position:absolute;
+        top:12px;
+        right:12px;
+        z-index:20;
+        display:flex;
+        align-items:center;
+        gap:8px;
+        padding:8px 12px;
+        border-radius:12px;
+        background:rgba(255,255,255,0.98);
+        border:1px solid #ddd6fe;
+        box-shadow:0 8px 24px rgba(15,23,42,0.08);
+        font-size:12px;
+        color:#5b21b6;
+        font-weight:600;
+      "
+    >
+      <span>Selected {{ selectedIdsForHint.length }} nodes</span>
+
+      <button
+        @click.stop="mergeSelectedNodes(selectedIdsForHint)"
+        :disabled="selectedIdsForHint.length < 2"
+        :style="{
+          border: 'none',
+          background: selectedIdsForHint.length < 2 ? '#c4b5fd' : '#8b5cf6',
+          color: 'white',
+          padding: '6px 12px',
+          borderRadius: '999px',
+          fontSize: '12px',
+          fontWeight: '700',
+          cursor: selectedIdsForHint.length < 2 ? 'not-allowed' : 'pointer',
+          opacity: selectedIdsForHint.length < 2 ? '0.7' : '1'
+        }"
+      >
+        Merge
+      </button>
+
+      <button
+        @click.stop="commitSelectedIds([])"
+        style="
+          border:1px solid #e5e7eb;
+          background:white;
+          color:#475569;
+          padding:6px 12px;
+          border-radius:999px;
+          font-size:12px;
+          font-weight:600;
+          cursor:pointer;
+        "
+      >
+        Clear
+      </button>
+
+      <button
+        @click.stop="boxSelectMode = true"
+        style="
+          border:1px solid #bfdbfe;
+          background:#eff6ff;
+          color:#1d4ed8;
+          padding:6px 12px;
+          border-radius:999px;
+          font-size:12px;
+          font-weight:600;
+          cursor:pointer;
+        "
+      >
+        Box Select Again
+      </button>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { workflowTypes } from '@/composables/useWorkflow'
 import * as d3 from 'd3'
-
 import {
   renderTree,
-  updateVisibility,
   updateSelectionStyles
 } from '@/lib/workflowGraph.js'
 
-// ========== Props ==========
 const props = defineProps({
   nodes: { type: Array, default: () => [] },
   selectedIds: { type: Array, default: () => [] }
 })
 
-// ========== Emits ==========
 const emit = defineEmits([
   'update:selectedIds',
   'delete-node',
@@ -50,29 +139,19 @@ const emit = defineEmits([
   'refresh-node',
   'upload-media',
   'update-node-media-from-parent',
-  'regenerate-node',
-  'merge-nodes',
-  'update:ungroup', // 新增：解组后更新节点列表
-  'ungroup-node'    // 新增：解组事件
+  'regenerate-node'
 ])
 
-const graphEmit = (event, ...args) => {
-  if (event === 'ungroup-node') {
-    ungroupNodes(...args); // 解组事件直接触发拆分逻辑
-  } else {
-    emit(event, ...args);
-  }
-};
-
-// ========== Refs ==========
 const svgContainer = ref(null)
-// 框选相关状态
-const isCtrlPressed = ref(false) 
-const selecting = ref(false) 
-const selectBox = ref({ left: 0, top: 0, width: 0, height: 0 }) 
-const selectStart = ref({ x: 0, y: 0 }) 
 
-// 当前布局配置
+const boxSelectMode = ref(false)
+const selecting = ref(false)
+const selectionStarted = ref(false)
+const selectBox = ref({ left: 0, top: 0, width: 0, height: 0 })
+const selectStart = ref({ x: 0, y: 0 })
+
+const BOX_DRAG_THRESHOLD = 6
+
 const layoutConfig = ref({
   horizontalGap: 100,
   verticalGap: 120,
@@ -83,7 +162,79 @@ const layoutConfig = ref({
   }
 })
 
-// 提取 zoom/平移状态
+const localGroups = ref([])
+const renderedNodes = ref([])
+const localSelectedIds = ref([...(props.selectedIds || [])])
+const ignoreBackgroundClearUntil = ref(0)
+
+function markIgnoreBackgroundClear(ms = 250) {
+  ignoreBackgroundClearUntil.value = Date.now() + ms
+}
+
+const selectedIdsForHint = computed(() => localSelectedIds.value || [])
+
+function sameIds(a = [], b = []) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+function cloneNode(node) {
+  return JSON.parse(JSON.stringify(node))
+}
+
+function uniq(arr) {
+  return Array.from(new Set((arr || []).filter(Boolean)))
+}
+
+function isTypingTarget(target) {
+  if (!target) return false
+  const tag = target.tagName?.toLowerCase()
+  return (
+    tag === 'input' ||
+    tag === 'textarea' ||
+    tag === 'select' ||
+    target.isContentEditable
+  )
+}
+
+function applyLocalSelectedIds(ids = []) {
+  const nextIds = [...ids]
+  if (sameIds(localSelectedIds.value, nextIds)) return
+
+  localSelectedIds.value = nextIds
+
+  if (svgContainer.value) {
+    updateSelectionStyles(svgContainer.value, nextIds)
+  }
+}
+
+function commitSelectedIds(ids = []) {
+  const nextIds = [...ids]
+
+  if (!sameIds(localSelectedIds.value, nextIds)) {
+    localSelectedIds.value = nextIds
+    if (svgContainer.value) {
+      updateSelectionStyles(svgContainer.value, nextIds)
+    }
+  }
+
+  if (!sameIds(props.selectedIds || [], nextIds)) {
+    emit('update:selectedIds', nextIds)
+  }
+}
+
+function resetSelectionBox() {
+  selecting.value = false
+  selectionStarted.value = false
+  selectBox.value = { left: 0, top: 0, width: 0, height: 0 }
+
+  document.body.style.userSelect = ''
+  document.body.style.webkitUserSelect = ''
+}
+
 function getCurrentViewState() {
   if (!svgContainer.value) return null
 
@@ -107,75 +258,270 @@ function getCurrentViewState() {
   return null
 }
 
-// ========== 修复后的框选核心逻辑 ==========
-// 1. 监听 Ctrl 键
+function mergeNodeAssets(assetsList) {
+  const mergedAssets = {
+    input: { images: [], videos: [], audio: [] },
+    output: { images: [], videos: [], audio: [] }
+  }
+
+  assetsList.forEach(assets => {
+    if (!assets) return
+
+    if (assets.input) {
+      mergedAssets.input.images = [...mergedAssets.input.images, ...(assets.input.images || [])]
+      mergedAssets.input.videos = [...mergedAssets.input.videos, ...(assets.input.videos || [])]
+      mergedAssets.input.audio = [...mergedAssets.input.audio, ...(assets.input.audio || [])]
+    }
+
+    if (assets.output) {
+      mergedAssets.output.images = [...mergedAssets.output.images, ...(assets.output.images || [])]
+      mergedAssets.output.videos = [...mergedAssets.output.videos, ...(assets.output.videos || [])]
+      mergedAssets.output.audio = [...mergedAssets.output.audio, ...(assets.output.audio || [])]
+    }
+  })
+
+  return mergedAssets
+}
+
+function buildCompositeSummary(nodes) {
+  const summary = {
+    image: 0,
+    video: 0,
+    audio: 0,
+    text: 0
+  }
+
+  nodes.forEach(node => {
+    const assets = node.assets || {}
+    const output = assets.output || {}
+
+    summary.image += (output.images || []).filter(
+      p => !String(p).includes('.mp4') && !String(p).includes('subfolder=video')
+    ).length
+
+    summary.video +=
+      (output.videos || []).length +
+      (output.images || []).filter(
+        p => String(p).includes('.mp4') || String(p).includes('subfolder=video')
+      ).length
+
+    summary.audio += (output.audio || []).length
+
+    const text = node.parameters?.text || node.parameters?.positive_prompt || ''
+    if (text && String(text).trim()) summary.text += 1
+  })
+
+  return summary
+}
+
+function parentSignature(node) {
+  return JSON.stringify([...(node.originalParents || [])].sort())
+}
+
+function buildCompositeNode(group, groupedNodes, allNodes) {
+  const selectedSet = new Set(group.nodeIds)
+
+  const externalParents = uniq(
+    groupedNodes.flatMap(n => n.originalParents || []).filter(pid => !selectedSet.has(pid))
+  )
+
+  const downstreamIds = uniq(
+    allNodes
+      .filter(n => !selectedSet.has(n.id))
+      .filter(n => (n.originalParents || []).some(pid => selectedSet.has(pid)))
+      .map(n => n.id)
+  )
+
+  const summary = buildCompositeSummary(groupedNodes)
+
+  return {
+    id: group.id,
+    originalParents: externalParents.length ? externalParents : null,
+    module_id: 'composite',
+    created_at: group.created_at,
+    status: 'completed',
+    media: null,
+    parameters: {
+      composite_nodes: groupedNodes.map(cloneNode),
+      global_context: ''
+    },
+    isComposite: true,
+    isVirtualGroup: true,
+    sourceNodeIds: [...group.nodeIds],
+    combinedNodes: groupedNodes.map(cloneNode),
+    childrenIds: downstreamIds,
+    label: `Group · ${groupedNodes.length}`,
+    summary,
+    assets: mergeNodeAssets(groupedNodes.map(n => n.assets || {})),
+    linkColor: '#8b5cf6',
+    _collapsed: false
+  }
+}
+
+function applyLocalGroups(baseNodes) {
+  let nextNodes = (baseNodes || []).map(n => ({ ...n }))
+
+  localGroups.value.forEach(group => {
+    const selectedSet = new Set(group.nodeIds)
+    const groupedNodes = nextNodes.filter(n => selectedSet.has(n.id))
+
+    if (groupedNodes.length < 2) return
+
+    const compositeNode = buildCompositeNode(group, groupedNodes, nextNodes)
+    const firstIndex = Math.max(0, nextNodes.findIndex(n => selectedSet.has(n.id)))
+
+    const rewiredNodes = nextNodes
+      .filter(n => !selectedSet.has(n.id))
+      .map(n => {
+        const parents = n.originalParents || []
+        if (!parents.some(pid => selectedSet.has(pid))) return n
+
+        return {
+          ...n,
+          originalParents: uniq(
+            parents.map(pid => (selectedSet.has(pid) ? group.id : pid))
+          )
+        }
+      })
+
+    rewiredNodes.splice(Math.min(firstIndex, rewiredNodes.length), 0, compositeNode)
+    nextNodes = rewiredNodes
+  })
+
+  return nextNodes
+}
+
+function syncRenderedTree(nextSelectedIds = localSelectedIds.value || []) {
+  renderedNodes.value = applyLocalGroups(props.nodes)
+
+  if (!svgContainer.value) return
+
+  const viewState = getCurrentViewState()
+
+  renderTree(
+    svgContainer.value,
+    renderedNodes.value,
+    nextSelectedIds,
+    graphEmit,
+    workflowTypes,
+    viewState,
+    layoutConfig.value
+  )
+}
+
 function handleKeyDown(e) {
-  if (e.ctrlKey) {
-    isCtrlPressed.value = true
-  }
-}
+  if (isTypingTarget(e.target)) return
 
-function handleKeyUp(e) {
-  if (!e.ctrlKey) {
-    isCtrlPressed.value = false
-    if (selecting.value) {
-      handleMouseUp() // 松开Ctrl直接结束框选
+  if (e.key === 'b' || e.key === 'B') {
+    e.preventDefault()
+    boxSelectMode.value = !boxSelectMode.value
+
+    if (!boxSelectMode.value) {
+      resetSelectionBox()
     }
+    return
+  }
+
+  if ((e.key === 'g' || e.key === 'G') && localSelectedIds.value.length >= 2) {
+    e.preventDefault()
+    mergeSelectedNodes(localSelectedIds.value)
+    return
+  }
+
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    boxSelectMode.value = false
+    resetSelectionBox()
+    commitSelectedIds([])
   }
 }
 
-// 2. 开始框选（绑定到整个SVG容器的mousedown，而非节点）
+function handleKeyUp() {
+  // no-op
+}
+
 function handleSvgMouseDown(e) {
-  // 只有按住Ctrl且是左键点击时，才触发框选
-  if (isCtrlPressed.value && e.button === 0) {
-    e.preventDefault() // 阻止默认拖拽/选中文本
-    e.stopPropagation()
+  if (!boxSelectMode.value || e.button !== 0) return
 
-    // 记录起始坐标（相对于视口，不是SVG内部）
-    selectStart.value = { x: e.clientX, y: e.clientY }
-    // 初始化框选框位置
-    selectBox.value = {
-      left: selectStart.value.x,
-      top: selectStart.value.y,
-      width: 0,
-      height: 0
-    }
-    selecting.value = true // 标记开始框选
+  const target = e.target
+  const clickedOnNode = !!(
+    target &&
+    target.closest &&
+    target.closest('.node, foreignObject, .node-card, button, input, textarea, select')
+  )
+
+  if (clickedOnNode) return
+
+  e.preventDefault()
+  e.stopPropagation()
+  if (typeof e.stopImmediatePropagation === 'function') {
+    e.stopImmediatePropagation()
   }
+
+  selectStart.value = { x: e.clientX, y: e.clientY }
+  selectBox.value = {
+    left: e.clientX,
+    top: e.clientY,
+    width: 0,
+    height: 0
+  }
+
+  selecting.value = true
+  selectionStarted.value = false
+
+  document.body.style.userSelect = 'none'
+  document.body.style.webkitUserSelect = 'none'
 }
 
-// 3. 拖动鼠标绘制框选框（绑定到window，避免鼠标移出SVG失效）
 function handleWindowMouseMove(e) {
   if (!selecting.value) return
 
   e.preventDefault()
-  // 实时计算框选框的位置和尺寸（兼容任意方向拖拽）
+  e.stopPropagation()
+
+  const dx = e.clientX - selectStart.value.x
+  const dy = e.clientY - selectStart.value.y
+
+  if (!selectionStarted.value) {
+    if (Math.hypot(dx, dy) < BOX_DRAG_THRESHOLD) {
+      return
+    }
+    selectionStarted.value = true
+  }
+
   const x = e.clientX
   const y = e.clientY
+
   selectBox.value.left = Math.min(x, selectStart.value.x)
   selectBox.value.top = Math.min(y, selectStart.value.y)
   selectBox.value.width = Math.abs(x - selectStart.value.x)
   selectBox.value.height = Math.abs(y - selectStart.value.y)
 }
 
-// 4. 结束框选（松开左键）
-function handleMouseUp() {
+function handleMouseUp(e) {
   if (!selecting.value) return
 
-  selecting.value = false
-  // 检测框选范围内的节点
-  const selectedNodeIds = getNodesInSelectionBox()
-  
-  console.log('[WorkflowTree] 框选节点ID：', selectedNodeIds) // 调试用
+  if (e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const hadRealDrag = selectionStarted.value
+  const selectedNodeIds = hadRealDrag ? getNodesInSelectionBox() : []
+
+  resetSelectionBox()
+
+  if (!hadRealDrag) return
 
   if (selectedNodeIds.length > 0) {
-    emit('update:selectedIds', selectedNodeIds)
-    
-    // 选中≥2个节点时触发合并
-    if (selectedNodeIds.length >= 2) {
-      mergeSelectedNodes(selectedNodeIds)
-    }
+    // 忽略接下来那次背景 click 触发的清空
+    markIgnoreBackgroundClear()
+    commitSelectedIds(selectedNodeIds)
+  } else {
+    commitSelectedIds([])
   }
+
+  boxSelectMode.value = false
 }
 
 function getNodesInSelectionBox() {
@@ -185,185 +531,100 @@ function getNodesInSelectionBox() {
   const selectedIds = []
   const svgEl = svgContainer.value
 
-  // 选择所有带 data-id 的 .node 元素（精准匹配）
   const nodeElements = d3.select(svgEl).selectAll('.node[data-id]').nodes()
 
   nodeElements.forEach(el => {
     const rect = el.getBoundingClientRect()
-    // 碰撞检测
-    const isInBox = 
+
+    const isInBox =
       rect.left < box.left + box.width &&
       rect.right > box.left &&
       rect.top < box.top + box.height &&
       rect.bottom > box.top
 
     if (isInBox) {
-      // 直接从 data-id 提取 ID（和 workflowGraph.js 中的 d.id 一致）
       const nodeId = el.getAttribute('data-id')
-      if (nodeId) {
-        selectedIds.push(nodeId)
-      }
+      if (nodeId) selectedIds.push(nodeId)
     }
   })
 
   return selectedIds
 }
 
-// WorkflowTree.vue 中（mergeSelectedNodes 方法上方）
-// 辅助方法：合并节点的 assets 字段（前端临时使用，不影响数据库）
-function mergeNodeAssets(assetsList) {
-  // 初始化合并后的 assets（适配你的数据结构）
-  const mergedAssets = {
-    input: { images: [], videos: [], audio: [] },
-    output: { images: [], videos: [], audio: [] }
-  };
-
-  // 遍历所有选中节点的 assets，合并到一起
-  assetsList.forEach(assets => {
-    if (!assets) return;
-
-    // 合并 input 部分
-    if (assets.input) {
-      mergedAssets.input.images = [...mergedAssets.input.images, ...(assets.input.images || [])];
-      mergedAssets.input.videos = [...mergedAssets.input.videos, ...(assets.input.videos || [])];
-      mergedAssets.input.audio = [...mergedAssets.input.audio, ...(assets.input.audio || [])];
-    }
-
-    // 合并 output 部分
-    if (assets.output) {
-      mergedAssets.output.images = [...mergedAssets.output.images, ...(assets.output.images || [])];
-      mergedAssets.output.videos = [...mergedAssets.output.videos, ...(assets.output.videos || [])];
-      mergedAssets.output.audio = [...mergedAssets.output.audio, ...(assets.output.audio || [])];
-    }
-  });
-
-  return mergedAssets;
-}
-
 function mergeSelectedNodes(selectedNodeIds) {
-  const selectedNodes = props.nodes.filter(node => 
+  const selectedNodes = renderedNodes.value.filter(node =>
     selectedNodeIds.includes(node.id)
-  );
+  )
 
-  if (selectedNodes.length < 2) return;
+  const validNodes = selectedNodes.filter(node => !node.isComposite)
 
-  // 1. 复用原节点的 originalParents（数据库字段）
-  const originalParents = selectedNodes[0].originalParents || null;
-  const allNodes = props.nodes;
-  const inheritedChildIds = [];
-  
-  allNodes.forEach(node => {
-    if (node.originalParents) {
-      const hasParentInSelection = node.originalParents.some(pid => 
-        selectedNodeIds.includes(pid)
-      );
-      if (hasParentInSelection) {
-        inheritedChildIds.push(node.id);
-      }
-    }
-  });
-  const childrenIds = Array.from(new Set(inheritedChildIds));
+  if (validNodes.length < 2) return
 
-  // 【关键补充】添加 combinedNodes 字段，存储原始节点完整数据
-  const mergedNode = {
-    id: `composite_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    originalParents: originalParents,
-    module_id: 'composite',
-    created_at: new Date().toISOString(),
-    status: 'completed',
-    media: null,
-    parameters: {
-      composite_nodes: selectedNodes, // 同步到 parameters
-      global_context: ''
-    },
-    isComposite: true,
-    sourceNodeIds: selectedNodeIds,
-    combinedNodes: selectedNodes, // 【新增】存储原始节点完整数据
-    childrenIds: childrenIds,
-    label: `复合节点 (${selectedNodes.length}个节点)`,
-    assets: mergeNodeAssets(selectedNodes.map(n => n.assets || {})),
-    linkColor: '#409eff',
-    _collapsed: false
-  };
+  const parentKeys = new Set(validNodes.map(parentSignature))
+  if (parentKeys.size > 1) {
+    alert('Current limitation: merging is restricted to nodes that share the same parent node.')
+    return
+  }
 
-  emit('merge-nodes', {
-    originalNodeIds: selectedNodeIds,
-    mergedNode: mergedNode
-  });
+  const groupId = `composite_${Date.now()}_${Math.floor(Math.random() * 1000)}`
 
-  emit('update:selectedIds', [mergedNode.id]);
+  localGroups.value.push({
+    id: groupId,
+    nodeIds: validNodes.map(n => n.id),
+    created_at: new Date().toISOString()
+  })
+
+  boxSelectMode.value = false
+  commitSelectedIds([groupId])
+  syncRenderedTree([groupId])
 }
-
 
 function ungroupNodes(compositeNodeId) {
-  // 1. 找到目标复合节点（原有逻辑保留）
-  const compositeNode = props.nodes.find(node => node.id === compositeNodeId);
-  console.log('待拆分的复合节点：', compositeNode);
-  if (!compositeNode || compositeNode.isComposite !== true) {
-    console.warn('无效的复合节点：', compositeNodeId);
-    return;
-  }
+  const targetGroup = localGroups.value.find(g => g.id === compositeNodeId)
+  if (!targetGroup) return
 
-  // 2. 读取原始节点数据（原有逻辑保留）
-  let originalNodes = compositeNode.combinedNodes || [];
-  if (!originalNodes || originalNodes.length === 0) {
-    originalNodes = compositeNode?.parameters?.composite_nodes || [];
-  }
-  if (!originalNodes || originalNodes.length === 0) {
-    console.warn('复合节点无原始节点数据：', compositeNodeId);
-    return;
-  }
-  const originalNodeIds = originalNodes.map(n => n.id);
-  console.log('待恢复的原始节点ID：', originalNodeIds);
+  const restoredIds = [...targetGroup.nodeIds]
+  localGroups.value = localGroups.value.filter(g => g.id !== compositeNodeId)
 
-  // 3. 恢复原始节点状态（原有逻辑保留）
-  const restoredNodes = originalNodes.map(node => ({
-    ...node,
-    isComposite: false, // 关键：取消「被组合」标记
-    originalParents: node.originalParents || compositeNode.originalParents,
-    childrenIds: node.childrenIds || compositeNode.childrenIds,
-    calculatedWidth: node.calculatedWidth || compositeNode.calculatedWidth,
-    calculatedHeight: node.calculatedHeight || compositeNode.calculatedHeight,
-    _cardType: node._cardType || compositeNode._cardType
-  }));
-
-  // 4. 构造新的节点列表（原有逻辑保留）
-  const newNodes = props.nodes
-    .filter(node => node.id !== compositeNodeId) // 删除复合节点
-    .map(node => {
-      const restoredNode = restoredNodes.find(n => n.id === node.id);
-      return restoredNode || node; // 覆盖原有节点（恢复 isCombined: false）
-    })
-    .concat(restoredNodes.filter(n => !props.nodes.some(node => node.id === n.id))); // 补充缺失的原始节点
-
-  // ========== 新增：触发界面刷新 ==========
-  if (svgContainer.value) {
-    // 方式1：强制重新渲染（推荐，确保布局更新）
-    const viewState = getCurrentViewState(); // 保留缩放/平移状态
-    renderTree(
-      svgContainer.value,
-      newNodes, // 传入新的节点列表
-      originalNodeIds, // 选中恢复后的原始节点
-      graphEmit,
-      workflowTypes,
-      viewState,
-      layoutConfig.value
-    );
-    // 方式2：兜底刷新可见性（备用）
-    updateVisibility(svgContainer.value, newNodes);
-  }
-
-  // 5. 通知父组件更新（原有逻辑保留）
-  emit('update:ungroup', {
-    compositeNodeId,
-    originalNodeIds,
-    newNodes
-  });
-  emit('update:selectedIds', originalNodeIds);
+  commitSelectedIds(restoredIds)
+  syncRenderedTree(restoredIds)
 }
 
+const graphEmit = (event, ...args) => {
+  if (event === 'ungroup-node') {
+    ungroupNodes(...args)
+    return
+  }
 
-// ========== 布局更新 + 生命周期 ==========
+  if (event === 'update:selectedIds') {
+    const nextIds = Array.isArray(args[0]) ? args[0] : []
+
+    // 框选刚结束时，workflowGraph.js 背景 click 会马上发一个 []
+    // 这里把它吃掉，避免把刚选中的节点瞬间清空
+    if (
+      nextIds.length === 0 &&
+      Date.now() < ignoreBackgroundClearUntil.value
+    ) {
+      ignoreBackgroundClearUntil.value = 0
+      return
+    }
+
+    commitSelectedIds(nextIds)
+    return
+  }
+
+  if (event === 'delete-node') {
+    const nodeId = args[0]
+    const found = renderedNodes.value.find(n => n.id === nodeId)
+    if (found?.isComposite) {
+      ungroupNodes(nodeId)
+      return
+    }
+  }
+
+  emit(event, ...args)
+}
+
 function handleLayoutUpdated(event) {
   const detail = event.detail || {}
   layoutConfig.value = {
@@ -376,148 +637,61 @@ function handleLayoutUpdated(event) {
     }
   }
 
-  if (!svgContainer.value) return
-  const viewState = getCurrentViewState()
-  renderTree(
-    svgContainer.value,
-    props.nodes,
-    props.selectedIds,
-    graphEmit,
-    workflowTypes,
-    viewState,
-    layoutConfig.value
-  )
+  syncRenderedTree(localSelectedIds.value)
 }
 
 onMounted(() => {
   if (!svgContainer.value) return
 
-  // 布局更新监听
   window.addEventListener('t2v-layout-updated', handleLayoutUpdated)
-  
-  // 键盘监听（Ctrl键）
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener('keyup', handleKeyUp)
-  
-  // ===== 修复核心：事件绑定到SVG容器，而非节点 =====
+
   const svgEl = svgContainer.value
-  // 开始框选：绑定到整个SVG容器的mousedown
-  svgEl.addEventListener('mousedown', handleSvgMouseDown)
-  // 拖动绘制：绑定到window（避免鼠标移出SVG失效）
+  svgEl.addEventListener('mousedown', handleSvgMouseDown, true)
   window.addEventListener('mousemove', handleWindowMouseMove)
-  // 结束框选：绑定到window（避免鼠标移出SVG失效）
   window.addEventListener('mouseup', handleMouseUp)
 
-  // 初次渲染
-  renderTree(
-    svgContainer.value,
-    props.nodes,
-    props.selectedIds,
-    graphEmit,
-    workflowTypes,
-    null,
-    layoutConfig.value
-  )
+  syncRenderedTree(localSelectedIds.value)
 })
 
 onBeforeUnmount(() => {
-  // 移除所有监听，避免内存泄漏
   window.removeEventListener('t2v-layout-updated', handleLayoutUpdated)
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('keyup', handleKeyUp)
-  
+
   if (svgContainer.value) {
-    svgContainer.value.removeEventListener('mousedown', handleSvgMouseDown)
+    svgContainer.value.removeEventListener('mousedown', handleSvgMouseDown, true)
   }
+
   window.removeEventListener('mousemove', handleWindowMouseMove)
   window.removeEventListener('mouseup', handleMouseUp)
 })
 
-// ========== 原有Watcher逻辑（保留不变） ==========
-function isAssetsEqual(newAssets, oldAssets) {
-  if (!newAssets && !oldAssets) return true
-  if (!newAssets || !oldAssets) return false
-  const inputEqual = isMediaGroupEqual(newAssets.input, oldAssets.input)
-  const outputEqual = isMediaGroupEqual(newAssets.output, oldAssets.output)
-  return inputEqual && outputEqual
-}
-
-function isMediaGroupEqual(newGroup, oldGroup) {
-  if (!newGroup && !oldGroup) return true
-  if (!newGroup || !oldGroup) return false
-  const imagesEqual = arraysEqual(newGroup.images || [], oldGroup.images || [])
-  const videosEqual = arraysEqual(newGroup.videos || [], oldGroup.videos || [])
-  const audioEqual = arraysEqual(newGroup.audio || [], oldGroup.audio || [])
-  return imagesEqual && videosEqual && audioEqual
-}
-
-function arraysEqual(a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false
-  }
-  return true
-}
-
 watch(
   () => props.nodes,
-  (newNodes, oldNodes) => {
-    if (!svgContainer.value) return
-    let structureChanged = false
-    if (!oldNodes || newNodes.length !== oldNodes.length) {
-      structureChanged = true
-    } else {
-      const oldNodeMap = new Map(oldNodes.map(n => [n.id, n]))
-      for (const newNode of newNodes) {
-        if (!oldNodeMap.has(newNode.id)) {
-          structureChanged = true
-          break
-        }
-      }
-      if (!structureChanged) {
-        for (const newNode of newNodes) {
-          const oldNode = oldNodeMap.get(newNode.id)
-          if (!oldNode) {
-            structureChanged = true
-            break
-          }
-          if (newNode.module_id !== oldNode.module_id) {
-            structureChanged = true
-            break
-          }
-          if (!isAssetsEqual(newNode.assets, oldNode.assets)) {
-            structureChanged = true
-            break
-          }
-        }
-      }
-    }
-    if (structureChanged) {
-      const viewState = getCurrentViewState()
-      renderTree(
-        svgContainer.value,
-        newNodes,
-        props.selectedIds,
-        graphEmit,
-        workflowTypes,
-        viewState,
-        layoutConfig.value
-      )
-    } else {
-      updateVisibility(svgContainer.value, newNodes)
-    }
+  (nodes) => {
+    const nodeIdSet = new Set((nodes || []).map(n => n.id))
+    localGroups.value = localGroups.value.filter(group =>
+      group.nodeIds.every(id => nodeIdSet.has(id))
+    )
+    syncRenderedTree(localSelectedIds.value)
   },
-  { deep: true }
+  { immediate: true }
 )
 
 watch(
   () => props.selectedIds,
   (ids) => {
-    if (svgContainer.value) {
-      updateSelectionStyles(svgContainer.value, ids)
-    }
+    const nextIds = [...(ids || [])]
+    if (sameIds(localSelectedIds.value, nextIds)) return
+
+    localSelectedIds.value = nextIds
+
+    if (!svgContainer.value) return
+    updateSelectionStyles(svgContainer.value, nextIds)
   },
-  { deep: true }
+  { immediate: true }
 )
 </script>
 
@@ -530,10 +704,10 @@ watch(
   z-index: 9999;
 }
 
-/* Ctrl按下时鼠标变成十字，提示可框选 */
 svg {
   cursor: default;
 }
+
 svg:active:has(.selection-box),
 svg:hover:has(.selection-box) {
   cursor: crosshair;

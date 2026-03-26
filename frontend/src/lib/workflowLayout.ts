@@ -1,9 +1,16 @@
 // src/lib/workflowLayout.ts
-import App from '@/App.vue'
-import type { AppNode } from '@/composables/useWorkflow'
+// import App from '@/App.vue'
+// import type { AppNode } from '@/composables/useWorkflow'
 
 // 三种卡片类型（后面可以再细分）
-export type CardType = 'init' | 'textFull' | 'audio' | 'io'
+export type CardType =
+  | 'init'
+  | 'textFull'
+  | 'audio'
+  | 'io'
+  | 'composite'
+  | 'AddWorkflow'
+  | 'TextImage'
 
 // D3 实际使用的节点结构 = AppNode + UI 元数据
 export interface ViewNode extends AppNode {
@@ -12,36 +19,81 @@ export interface ViewNode extends AppNode {
   isInit: boolean        // 是否是根/初始卡
 }
 
+export interface AppNode {
+  id: string;
+  originalParents: string[] | null;
+  module_id: string;
+  created_at: string;
+  status: string;
+  media: AssetMedia[] | null;
+  linkColor?: string;
+  _collapsed?: boolean;
+  parameters: Record<string, any> | null;
+
+  childrenIds?: string[];
+  isComposite?: boolean;
+  isVirtualGroup?: boolean;
+  sourceNodeIds?: string[];
+  label?: string;
+  assets?: any;
+
+  combinedNodes?: AppNode[];
+  summary?: {
+    image: number;
+    video: number;
+    audio: number;
+    text: number;
+  };
+}
+
 // 根据 AppNode 判定 cardType
 function inferCardType(node: AppNode): CardType {
-  // 1) 根节点：没有 originalParents
+  if (node.isComposite) {
+    return 'composite'
+  }
+
   if (!node.originalParents || node.originalParents.length === 0) {
     return 'init'
   }
 
-  // 2) 纯文本提示词卡
   if (node.module_id === 'AddText') {
     return 'textFull'
   }
 
-  // 3) 音频卡
+  if (node.module_id === 'AddWorkflow' || node.module_id?.startsWith('AddWorkflow')) {
+    return 'AddWorkflow'
+  }
+
+  if (node.module_id === 'TextImage' || node.module_id === 'Upload') {
+    return 'TextImage'
+  }
+
   if (node.module_id === 'TextToAudio') {
     return 'audio'
   }
 
-  // 4) 其他默认当作 IO 卡（左右分栏：输入/输出）
   return 'io'
 }
-
 // 构造显示标题（现在先用 module_id 占位）
 function buildTitle(node: AppNode): string {
+  if (node.isComposite) {
+    return node.label || `Group (${node.combinedNodes?.length || 0})`
+  }
+
   if (!node.originalParents || node.originalParents.length === 0) {
     return 'Init'
   }
-  // 之后可以接你在 useWorkflowForm 里定义的 name
+
+  if (node.module_id === 'AddText') {
+    return 'Intent Draft'
+  }
+
+  if (node.module_id === 'AddWorkflow' || node.module_id?.startsWith('AddWorkflow')) {
+    return 'Workflow Planning'
+  }
+
   return node.module_id
 }
-
 // 对外暴露的主函数：把 AppNode[] 变成 ViewNode[]
 export function buildWorkflowView(nodes: AppNode[]): ViewNode[] {
   return (nodes || []).map((n) => {

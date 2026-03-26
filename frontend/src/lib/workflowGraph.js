@@ -125,6 +125,7 @@ function getNodeCategory(node) {
 
 function getNodeBorderColor(node) {
   const cat = getNodeCategory(node)
+  if (cat === 'composite') return '#8b5cf6'
   if (cat === 'audio') return NODE_COLORS.audio
   if (cat === 'image') return NODE_COLORS.image
   if (cat === 'video') return NODE_COLORS.video
@@ -133,34 +134,23 @@ function getNodeBorderColor(node) {
 
 function getSelectionColor(node) {
   const cat = getNodeCategory(node)
+  if (cat === 'composite') return '#8b5cf6'
   if (cat === 'audio') return NODE_COLORS.audio
   if (cat === 'image') return NODE_COLORS.image
   if (cat === 'video') return NODE_COLORS.video
   return '#CBD5E1'
 }
 
-//重写名称
 function getNodeHeaderBaseLabel(node) {
-  // 新增复合节点名称
-  if (node.isComposite) return `Composite (${node.combinedNodes?.length || 0} nodes)`;
-
+  if (node.isComposite) return node.label || `Group (${node.combinedNodes?.length || 0})`
 
   const mid = (node.module_id || '').toLowerCase()
 
-  // ★ 两个辅助节点用语义化标题
-  if (mid === 'addtext') {
-    // 原始用户意图 + 初次改写
-    return 'Intent Draft'
-  }
-  if (mid === 'addworkflow') {
-    // 在改写基础上整理成可执行工作流
-    return 'Workflow Planning'
-  }
+  if (mid === 'addtext') return 'Intent Draft'
+  if (mid === 'addworkflow') return 'Workflow Planning'
 
-  // 其他节点维持原有逻辑
   return node.module_id || '(Node)'
 }
-
 
 /** 统一控制卡片选中样式 */
 function setCardSelected(cardSel, nodeData, isSelected) {
@@ -522,7 +512,7 @@ export function renderTree(
 
   const wrapper = d3.select(svgElement)
 
-  // ⭐ 优先用外部传进来的 viewState；如果没有，就从 d3 的内部 zoom 状态恢复
+  // 优先用外部传进来的 viewState；如果没有，就从 d3 的内部 zoom 状态恢复
   let savedView = viewState
   if (!savedView) {
     const prev = wrapper.property('__zoom')      // d3.zoom 内部记录
@@ -563,55 +553,72 @@ export function renderTree(
     const cardType = inferCardType(node)
     const isInit = cardType === 'init'
 
-    //console.log('节点完整数据:', node);
-    //console.log('assets 数据:', node.assets); // 
-    const hasMedia = !!(node.assets && node.assets.output && node.assets.output.images && node.assets.output.images.length > 0)
+    const hasMedia = !!(
+      node.assets &&
+      node.assets.output &&
+      node.assets.output.images &&
+      node.assets.output.images.length > 0
+    )
+
     const rawPath = hasMedia ? node.assets.output.images[0] : ''
-    const isAudioMedia = typeof rawPath === 'string' &&
-      (rawPath.includes('.mp3') || rawPath.includes('.wav') || rawPath.includes('subfolder=audio'))
-    const promptText = (node.parameters) ? (node.parameters.positive_prompt || node.parameters.text) : null
+
+    const isAudioMedia =
+      typeof rawPath === 'string' &&
+      (
+        rawPath.includes('.mp3') ||
+        rawPath.includes('.wav') ||
+        rawPath.includes('subfolder=audio')
+      )
+
+    const promptText = node.parameters
+      ? (node.parameters.positive_prompt || node.parameters.text)
+      : null
+
     const hasPrompt = typeof promptText === 'string' && promptText.trim() !== ''
-    //console.log(`hasMedia:${hasMedia}`)
-    let width, height
+
+    let nodeWidth = 260
+    let nodeHeight = 120
 
     if (isInit) {
-      width = 60
-      height = 60
+      nodeWidth = 60
+      nodeHeight = 60
+    } else if (getNodeCategory(node) === 'composite') {
+      const count = node.combinedNodes?.length || node.sourceNodeIds?.length || 0
+      nodeWidth = 300
+      nodeHeight = count > 4 ? 180 : 156
     } else if (cardType === 'textFull') {
-      // AddText → Intent Draft，单栏对话框
-      width = 260
-      height = 150
+      nodeWidth = 260
+      nodeHeight = 150
     } else if (cardType === 'AddWorkflow') {
-      // Workflow Planning，需要比 Intent Draft 稍高一点
-      width = 260
-      height = 190
+      nodeWidth = 260
+      nodeHeight = 190
     } else if (cardType === 'TextImage') {
-      width = 260
-      height = 140
+      nodeWidth = 260
+      nodeHeight = 140
     } else if (cardType === 'audio' || isAudioMedia) {
-      width = 260
-      height = hasPrompt ? 175 : 110
-    } else { // io
-      width = 260
+      nodeWidth = 260
+      nodeHeight = hasPrompt ? 175 : 110
+    } else {
+      nodeWidth = 260
       if (hasMedia && hasPrompt) {
-        height = BASE_CARD_HEIGHT + PROMPT_AREA_HEIGHT
+        nodeHeight = BASE_CARD_HEIGHT + PROMPT_AREA_HEIGHT
       } else if (hasMedia) {
-        height = BASE_CARD_HEIGHT
+        nodeHeight = BASE_CARD_HEIGHT
       } else if (hasPrompt) {
-        height = 140
+        nodeHeight = 140
       } else {
-        height = 120
+        nodeHeight = 120
       }
     }
 
-    node.calculatedWidth = width
-    node.calculatedHeight = height
+    node.calculatedWidth = nodeWidth
+    node.calculatedHeight = nodeHeight
     node._cardType = cardType
 
     g.setNode(node.id, {
       label: node.module_id,
-      width,
-      height
+      width: nodeWidth,
+      height: nodeHeight
     })
   })
 
@@ -3362,168 +3369,169 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
 }
 // --- 新增：渲染复合节点 ---
 function renderCompositeNode(gEl, d, selectedIds, emit) {
+  const stats = d.summary || {
+    image: 0,
+    video: 0,
+    audio: 0,
+    text: 0
+  }
+
+  const members = d.combinedNodes || []
+  const memberNames = members.map(n => n.module_id || n.label || 'Node')
+
   const fo = gEl.append('foreignObject')
     .attr('width', d.calculatedWidth)
     .attr('height', d.calculatedHeight)
     .attr('x', -d.calculatedWidth / 2)
     .attr('y', -d.calculatedHeight / 2)
-    .style('overflow', 'visible');
+    .style('overflow', 'visible')
 
   const card = fo.append('xhtml:div')
     .attr('class', 'node-card')
-    .attr('data-node-category', getNodeCategory(d))
+    .attr('data-node-category', 'composite')
     .style('width', '100%')
     .style('height', '100%')
     .style('display', 'flex')
     .style('flex-direction', 'column')
-    .style('border-width', '2px')
-    .style('border-color', getNodeBorderColor(d))
-    .style('border-radius', '8px')
-    .style('position', 'relative')
+    .style('border', '2px solid #8b5cf6')
+    .style('border-radius', '12px')
+    .style('background', 'linear-gradient(180deg, #faf5ff 0%, #ffffff 100%)')
+    .style('box-sizing', 'border-box')
+    .style('overflow', 'hidden')
     .style('cursor', 'pointer')
-    .style('background-color', '#ffffff')
     .style('user-select', 'none')
-    .style('-webkit-user-select', 'none');
+    .style('-webkit-user-select', 'none')
 
-  setCardSelected(card, d, isVisuallySelected(d, selectedIds));
+  setCardSelected(card, d, isVisuallySelected(d, selectedIds))
 
   card.on('click', ev => {
-    if (ev.target && ev.target.closest && ev.target.closest('button, input, textarea')) return;
-    ev.stopPropagation();
-    const selected = new Set(selectedIds);
-    const on = selected.has(d.id);
-    if (on) selected.delete(d.id);
-    else if (selected.size < 2) selected.add(d.id);
-    setCardSelected(card, d, !on);
-    emit('update:selectedIds', Array.from(selected));
-  });
+    if (ev.target && ev.target.closest && ev.target.closest('button')) return
+    ev.stopPropagation()
+    const selected = new Set(selectedIds)
+    const on = selected.has(d.id)
+    if (on) selected.delete(d.id)
+    else selected.add(d.id)
+    emit('update:selectedIds', Array.from(selected))
+  })
 
-  // 构建头部
-  buildHeader(card, d);
-  addRightClickMenu(card, d, emit);
+  const header = card.append('xhtml:div')
+    .style('display', 'flex')
+    .style('justify-content', 'space-between')
+    .style('align-items', 'center')
+    .style('padding', '10px 12px 8px 12px')
+    .style('border-bottom', '1px solid #ede9fe')
+    .style('background', 'rgba(139,92,246,0.06)')
 
-  // 复合节点内容区
+  const left = header.append('xhtml:div')
+    .style('display', 'flex')
+    .style('flex-direction', 'column')
+    .style('gap', '2px')
+
+  left.append('xhtml:div')
+    .style('font-size', '12px')
+    .style('font-weight', '700')
+    .style('color', '#5b21b6')
+    .text(d.label || `Group · ${members.length}`)
+
+  left.append('xhtml:div')
+    .style('font-size', '10px')
+    .style('color', '#7c3aed')
+    .text('Temporary view group')
+
+  header.append('xhtml:div')
+    .style('font-size', '10px')
+    .style('font-weight', '700')
+    .style('color', '#6d28d9')
+    .style('padding', '3px 8px')
+    .style('border-radius', '999px')
+    .style('background', '#ede9fe')
+    .text(`${members.length} nodes`)
+
   const body = card.append('xhtml:div')
     .style('flex', '1 1 auto')
-    .style('min-height', '0')
-    .style('padding', '8px')
-    .style('overflow-y', 'auto');
+    .style('display', 'flex')
+    .style('flex-direction', 'column')
+    .style('gap', '10px')
+    .style('padding', '10px 12px')
 
-  // ========== 核心修改：展示输入输出配对 ==========
-  // 1. 提取并匹配所有子节点的输入输出对
-  const ioPairs = [];
-  (d.combinedNodes || []).forEach(node => {
-    // 提取当前节点的输入（input）
-    const input = {
-      images: node.assets?.input?.images || [],
-      audio: node.assets?.input?.audio || [],
-      text: node.parameters?.text || node.parameters?.positive_prompt || ''
-    };
-    
-    // 提取当前节点的输出（output）
-    const output = {
-      images: node.assets?.output?.images || [],
-      audio: node.assets?.output?.audio || [],
-      text: node.parameters?.text || node.parameters?.positive_prompt || ''
-    };
+  const chipRow = body.append('xhtml:div')
+    .style('display', 'flex')
+    .style('flex-wrap', 'wrap')
+    .style('gap', '6px')
 
-    // 只保留有有效内容的配对
-    if (input.images.length > 0 || input.audio.length > 0 || input.text ||
-        output.images.length > 0 || output.audio.length > 0 || output.text) {
-      ioPairs.push({
-        nodeId: node.id,
-        nodeName: getNodeHeaderBaseLabel(node) || node.module_id || 'Unknown Node',
-        input,
-        output
-      });
-    }
-  });
+  const chips = [
+    { label: `Image ${stats.image}`, bg: '#eff6ff', color: '#1d4ed8' },
+    { label: `Video ${stats.video}`, bg: '#ecfdf5', color: '#047857' },
+    { label: `Audio ${stats.audio}`, bg: '#eff6ff', color: '#2563eb' },
+    { label: `Text ${stats.text}`, bg: '#f8fafc', color: '#475569' }
+  ]
 
-  // 2. 渲染输入输出配对列表
-  if (ioPairs.length === 0) {
-    body.append('xhtml:div')
-      .style('padding', '16px')
-      .style('text-align', 'center')
-      .style('color', '#6b7280')
-      .style('font-size', '12px')
-      .text('No input/output data in combined nodes');
-  } else {
-    const pairList = body.append('xhtml:div')
-      .style('display', 'flex')
-      .style('flex-direction', 'column')
-      .style('gap', '12px');
+  chips.forEach(chip => {
+    chipRow.append('xhtml:span')
+      .style('font-size', '10px')
+      .style('font-weight', '600')
+      .style('padding', '4px 8px')
+      .style('border-radius', '999px')
+      .style('background', chip.bg)
+      .style('color', chip.color)
+      .text(chip.label)
+  })
 
-    ioPairs.forEach(pair => {
-      // 单个节点的输入输出卡片
-      const nodeCard = pairList.append('xhtml:div')
-        .style('padding', '8px')
-        .style('background', '#f9fafb')
-        .style('border-radius', '6px')
-        .style('border', '1px solid #e5e7eb');
+  const memberWrap = body.append('xhtml:div')
+    .style('display', 'flex')
+    .style('flex-wrap', 'wrap')
+    .style('gap', '6px')
 
-      // 节点名称
-      nodeCard.append('xhtml:div')
-        .style('font-weight', '600')
-        .style('font-size', '11px')
-        .style('color', '#111827')
-        .style('margin-bottom', '6px')
-        .text(`${pair.nodeName} (ID: ${pair.nodeId.slice(-4)})`);
+  memberNames.slice(0, 5).forEach(name => {
+    memberWrap.append('xhtml:span')
+      .style('font-size', '10px')
+      .style('padding', '4px 8px')
+      .style('border-radius', '999px')
+      .style('background', '#ffffff')
+      .style('border', '1px solid #ddd6fe')
+      .style('color', '#4c1d95')
+      .style('max-width', '120px')
+      .style('overflow', 'hidden')
+      .style('text-overflow', 'ellipsis')
+      .style('white-space', 'nowrap')
+      .text(name)
+  })
 
-      // 输入输出容器（左右布局）
-      const ioContainer = nodeCard.append('xhtml:div')
-        .style('display', 'flex')
-        .style('gap', '8px')
-        .style('font-size', '10px');
-
-      // 输入区域
-      const inputCol = ioContainer.append('xhtml:div')
-        .style('flex', '1')
-        .style('padding', '4px')
-        .style('background', '#f0f9ff')
-        .style('border-radius', '4px');
-
-      inputCol.append('xhtml:div')
-        .style('font-weight', '500')
-        .style('color', '#0284c7')
-        .style('margin-bottom', '4px')
-        .text('Input');
-
-      // 渲染输入内容
-      renderMediaContent(inputCol, pair.input);
-
-      // 输出区域
-      const outputCol = ioContainer.append('xhtml:div')
-        .style('flex', '1')
-        .style('padding', '4px')
-        .style('background', '#fef3c7')
-        .style('border-radius', '4px');
-
-      outputCol.append('xhtml:div')
-        .style('font-weight', '500')
-        .style('color', '#d97706')
-        .style('margin-bottom', '4px')
-        .text('Output');
-
-      // 渲染输出内容
-      renderMediaContent(outputCol, pair.output);
-    });
+  if (memberNames.length > 5) {
+    memberWrap.append('xhtml:span')
+      .style('font-size', '10px')
+      .style('padding', '4px 8px')
+      .style('border-radius', '999px')
+      .style('background', '#f5f3ff')
+      .style('color', '#6d28d9')
+      .text(`+${memberNames.length - 5}`)
   }
 
-  // 添加解组按钮
-  const ungroupBtn = body.append('xhtml:button')
-    .style('margin-top', '8px')
-    .style('padding', '4px 12px')
-    .style('background', '#8b5cf6') // 复合节点主题色
-    .style('color', 'white')
-    .style('border', 'none')
-    .style('border-radius', '4px')
+  const footer = body.append('xhtml:div')
+    .style('margin-top', 'auto')
+    .style('display', 'flex')
+    .style('justify-content', 'space-between')
+    .style('align-items', 'center')
+
+  footer.append('xhtml:div')
     .style('font-size', '10px')
+    .style('color', '#64748b')
+    .text('Local only · no DB write')
+
+  footer.append('xhtml:button')
+    .style('padding', '5px 12px')
+    .style('border', 'none')
+    .style('border-radius', '999px')
+    .style('background', '#8b5cf6')
+    .style('color', '#ffffff')
+    .style('font-size', '10px')
+    .style('font-weight', '700')
     .style('cursor', 'pointer')
-    .text('Ungroup Nodes')
-    .on('click', (ev) => {
-      ev.stopPropagation();
-      emit('ungroup-node', d.id);
-    });
+    .text('Ungroup')
+    .on('click', ev => {
+      ev.stopPropagation()
+      emit('ungroup-node', d.id)
+    })
 }
 
 // --- 辅助函数：渲染媒体内容（图片/音频/文本） ---
@@ -3684,21 +3692,20 @@ function renderMediaContent(container, data) {
     //   console.log('渲染复合节点：', d.id); // 验证是否走到这里
     //   renderCompositeNode(gEl, d, selectedIds, emit);
     // } 
-
     if (cardType === 'textFull') {
       console.log(`renderTree textFull`)
       renderTextFullNode(gEl, d, selectedIds, emit)
-    } else if(getNodeCategory(d)==='composite'){
-      console.log('渲染复合节点：', d.id); // 验证是否走到这里
-      renderCompositeNode(gEl, d, selectedIds, emit);
-    }else if (cardType === 'audio' || isAudioMedia) {
+    } else if (getNodeCategory(d) === 'composite') {
+      console.log('渲染复合节点：', d.id)
+      renderCompositeNode(gEl, d, selectedIds, emit)
+    } else if (cardType === 'audio' || isAudioMedia) {
       renderAudioNode(gEl, d, selectedIds, emit, workflowTypes)
-    } else if (cardType == 'TextImage'){
+    } else if (cardType === 'TextImage') {
       console.log(`render TextImage`)
       renderTextImageNode(gEl, d, selectedIds, emit)
-    } else if (cardType == 'AddWorkflow'){
+    } else if (cardType === 'AddWorkflow') {
       renderAddWorkflowNode(gEl, d, selectedIds, emit)
-    }else {
+    } else {
       renderIONode(gEl, d, selectedIds, emit, workflowTypes)
     }
   })
