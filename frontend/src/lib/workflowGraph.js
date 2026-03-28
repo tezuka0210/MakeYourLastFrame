@@ -1013,6 +1013,9 @@ export function renderTree(
     const content = section.append('xhtml:div')
       .style('display', isExpanded ? 'block' : 'none')
       .style('padding', '2px 0 0 0')
+      .style('width', '100%')
+      .style('box-sizing', 'border-box')
+      .style('overflow-x', 'hidden')
 
     header.on('click', () => {
       isExpanded = !isExpanded
@@ -1117,15 +1120,21 @@ export function renderTree(
     const { emptyText = 'No media yet', onThumbClick = null, onStageClick = null, makeDroppable = false, onDropMedia = null } = options
     const row = parent.append('xhtml:div')
       .style('display', 'flex')
+      .style('flex-wrap', 'wrap')
+      .style('align-content', 'flex-start')
       .style('gap', '6px')
-      .style('overflow-x', 'auto')
+      .style('overflow-x', 'hidden')
       .style('padding', '2px 0')
       .style('min-height', '56px')
+      .style('width', '100%')
+      .style('box-sizing', 'border-box')
 
     if (makeDroppable) {
       row.style('border', '1px dashed #e5e7eb')
         .style('border-radius', '8px')
         .style('padding', '6px')
+        .style('width', '100%')
+        .style('box-sizing', 'border-box')
         .on('dragover', ev => { ev.preventDefault(); ev.stopPropagation(); row.style('border-color', '#94a3b8').style('background', '#f8fafc') })
         .on('dragleave', ev => { ev.preventDefault(); ev.stopPropagation(); row.style('border-color', '#e5e7eb').style('background', 'transparent') })
         .on('drop', ev => {
@@ -1183,7 +1192,7 @@ export function renderTree(
     const row = sec.content.append('xhtml:div').style('display', 'flex').style('gap', '6px').style('align-items', 'center')
     const options = getWorkflowOptionIds(node.module_id)
     const select = row.append('xhtml:select')
-      .style('flex', '1 1 auto').style('height', '24px').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('background', '#ffffff').style('font-size', '10px').style('color', '#374151')
+      .style('flex', '1 1 auto').style('height', '24px').style('box-sizing', 'border-box').style('box-sizing', 'border-box').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('background', '#ffffff').style('font-size', '10px').style('color', '#374151')
       .on('mousedown', ev => ev.stopPropagation())
     options.forEach(id => {
       const opt = select.append('xhtml:option').attr('value', id).text(id)
@@ -1200,60 +1209,233 @@ export function renderTree(
 
   function buildPromptSection(parent, node, emit, inputMediaResolver = null) {
     const promptState = extractPromptState(node)
-    let noteArea, positiveArea, negativeArea
+
+    function parseCueString(prompt) {
+      if (!prompt) return []
+      const trimmed = String(prompt).trim()
+      if (!trimmed) return []
+      const noBrackets = trimmed.replace(/[()]/g, '')
+      return noBrackets
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+        .map(item => {
+          if (item.includes(':')) {
+            const idx = item.lastIndexOf(':')
+            const text = item.slice(0, idx).trim()
+            const weight = parseFloat(item.slice(idx + 1).trim())
+            return { text, weight: Number.isFinite(weight) ? weight : 1.0 }
+          }
+          return { text: item, weight: 1.0 }
+        })
+        .filter(p => p.text)
+    }
+
+    function serializeCueList(list) {
+      return (list || [])
+        .filter(item => item && String(item.text || '').trim())
+        .map(item => `${String(item.text).trim()}:${Number.isFinite(item.weight) ? item.weight.toFixed(1) : '1.0'}`)
+        .join(', ')
+    }
+
+    let noteArea
+    let positivePhrases = parseCueString(promptState.positive || promptState.note)
+    let negativePhrases = parseCueString(promptState.negative)
+    let positiveContainer, negativeContainer, positiveCount, negativeCount
+
+    function syncPromptStateFromUI() {
+      const next = {
+        note: noteArea ? (noteArea.property('value') || '') : '',
+        positive: serializeCueList(positivePhrases),
+        negative: serializeCueList(negativePhrases)
+      }
+      syncPromptState(node, next, emit)
+      return next
+    }
+
+    function buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind) {
+      container.selectAll('*').remove()
+      const list = listRefGetter()
+      countSel.text(`(${list.length})`)
+
+      if (!list.length) {
+        container.append('xhtml:div')
+          .style('font-size', '10px')
+          .style('color', '#9ca3af')
+          .style('padding', '2px 0')
+          .text(`No ${kind} cues yet`)
+      }
+
+      list.forEach((phrase, idx) => {
+        const row = container.append('xhtml:div')
+          .style('display', 'grid')
+          .style('grid-template-columns', '1fr 44px 18px 18px')
+          .style('gap', '4px')
+          .style('align-items', 'center')
+          .style('margin-bottom', '4px')
+
+        row.append('xhtml:input')
+          .attr('type', 'text')
+          .attr('value', phrase.text || '')
+          .style('height', '24px')
+          .style('border', '1px solid #e5e7eb')
+          .style('border-radius', '6px')
+          .style('padding', '0 6px')
+          .style('font-size', '10px')
+          .style('background', '#ffffff')
+          .on('mousedown', ev => ev.stopPropagation())
+          .on('input', function () {
+            const next = [...listRefGetter()]
+            next[idx] = { ...next[idx], text: this.value }
+            listRefSetter(next)
+            syncPromptStateFromUI()
+          })
+
+        row.append('xhtml:input')
+          .attr('type', 'number')
+          .attr('min', '0.0')
+          .attr('max', '1.9')
+          .attr('step', '0.1')
+          .attr('value', Number.isFinite(phrase.weight) ? phrase.weight.toFixed(1) : '1.0')
+          .style('height', '24px')
+          .style('border', '1px solid #e5e7eb')
+          .style('border-radius', '6px')
+          .style('padding', '0 4px')
+          .style('font-size', '10px')
+          .style('background', '#ffffff')
+          .on('mousedown', ev => ev.stopPropagation())
+          .on('input', function () {
+            let v = parseFloat(this.value)
+            if (!Number.isFinite(v)) v = 1.0
+            v = Math.max(0.0, Math.min(1.9, v))
+            const next = [...listRefGetter()]
+            next[idx] = { ...next[idx], weight: v }
+            listRefSetter(next)
+            syncPromptStateFromUI()
+          })
+
+        buildTinyButton(row, '+', `Add ${kind} cue below`, () => {
+          const next = [...listRefGetter()]
+          next.splice(idx + 1, 0, { text: '', weight: 1.0 })
+          listRefSetter(next)
+          buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind)
+          syncPromptStateFromUI()
+        })
+          .style('padding', '0')
+          .style('min-width', '18px')
+
+        buildTinyButton(row, '×', `Delete ${kind} cue`, () => {
+          const next = [...listRefGetter()]
+          next.splice(idx, 1)
+          listRefSetter(next)
+          buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind)
+          syncPromptStateFromUI()
+        })
+          .style('padding', '0')
+          .style('min-width', '18px')
+      })
+    }
+
     const sec = buildCollapsibleSection(parent, 'Prompts', true, (controls) => {
       buildTinyButton(controls, 'A', 'Agent assist', async () => {
         try {
           clearPrevAgentContext()
           const mediaUrl = inputMediaResolver ? inputMediaResolver() : (getInputMediaUrls(node)[0] || '')
-          const payload = { user_input: noteArea.property('value') || '', node_id: node.id, image_url: mediaUrl || '', workflow_context: { current_workflow: node.module_id, parent_nodes: node.originalParents || [] } }
-          const res = await fetch('/api/agents/process', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+          const payload = {
+            user_input: noteArea.property('value') || '',
+            node_id: node.id,
+            image_url: mediaUrl || '',
+            workflow_context: { current_workflow: node.module_id, parent_nodes: node.originalParents || [] }
+          }
+          const res = await fetch('/api/agents/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
           const data = await res.json()
-          setPrevAgentContext({ global_context: data.global_context || '', intent: data.intent || '', selected_workflow: data.selected_workflow || '', knowledge_context: data.knowledge_context || '', image_caption: data.image_caption || '', style: data.style || '' })
-          const next = { note: data.message?.text || noteArea.property('value') || '', positive: data.message?.positive || positiveArea.property('value') || '', negative: data.message?.negative || negativeArea.property('value') || '' }
-          noteArea.property('value', next.note); positiveArea.property('value', next.positive); negativeArea.property('value', next.negative)
-          syncPromptState(node, next, emit)
-        } catch (err) { console.error('Agent assist failed:', err) }
+          setPrevAgentContext({
+            global_context: data.global_context || '',
+            intent: data.intent || '',
+            selected_workflow: data.selected_workflow || '',
+            knowledge_context: data.knowledge_context || '',
+            image_caption: data.image_caption || '',
+            style: data.style || ''
+          })
+          const note = data.message?.text || noteArea.property('value') || ''
+          noteArea.property('value', note)
+          positivePhrases = parseCueString(data.message?.positive || '')
+          negativePhrases = parseCueString(data.message?.negative || '')
+          buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
+          buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
+          syncPromptStateFromUI()
+        } catch (err) {
+          console.error('Agent assist failed:', err)
+        }
       })
+
       buildTinyButton(controls, '↻', 'Generate', () => {
-        const next = { note: noteArea.property('value') || '', positive: positiveArea.property('value') || '', negative: negativeArea.property('value') || '' }
-        syncPromptState(node, next, emit)
+        const next = syncPromptStateFromUI()
         const regenerated = { ...(node.parameters || {}) }
-        regenerated.text = next.note; regenerated.prompt_note = next.note; regenerated.positive_prompt = next.positive; regenerated.negative_prompt = next.negative
+        regenerated.text = next.note
+        regenerated.prompt_note = next.note
+        regenerated.positive_prompt = next.positive
+        regenerated.negative_prompt = next.negative
         emit('regenerate-node', node.id, node.module_id, regenerated)
       })
     })
 
     noteArea = sec.content.append('xhtml:textarea')
       .attr('class', 'thin-scroll')
-      .style('width', '100%').style('min-height', '54px').style('padding', '6px 8px').style('font-size', '10px').style('border', '1px solid #e5e7eb').style('border-radius', '8px').style('background', '#f9fafb').style('resize', 'none').style('outline', 'none')
+      .style('width', '100%')
+      .style('box-sizing', 'border-box')
+      .style('min-height', '54px')
+      .style('padding', '6px 8px')
+      .style('font-size', '10px')
+      .style('border', '1px solid #e5e7eb')
+      .style('border-radius', '8px')
+      .style('background', '#f9fafb')
+      .style('resize', 'none')
+      .style('outline', 'none')
       .attr('placeholder', 'Describe the scene, operation, or target effect...')
       .property('value', promptState.note)
       .on('mousedown', ev => ev.stopPropagation())
-      .on('blur', () => syncPromptState(node, { note: noteArea.property('value') || '', positive: positiveArea.property('value') || '', negative: negativeArea.property('value') || '' }, emit))
+      .on('blur', () => syncPromptStateFromUI())
 
-    const cuesRow = sec.content.append('xhtml:div').style('display', 'grid').style('grid-template-columns', '1fr 1fr').style('gap', '6px').style('margin-top', '6px')
+    const cuesRow = sec.content.append('xhtml:div')
+      .style('display', 'flex')
+      .style('flex-direction', 'column')
+      .style('gap', '8px')
+      .style('margin-top', '6px')
+
     const posWrap = cuesRow.append('xhtml:div').style('display', 'flex').style('flex-direction', 'column').style('gap', '4px')
-    posWrap.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Positive cues')
-    positiveArea = posWrap.append('xhtml:textarea')
-      .attr('class', 'thin-scroll')
-      .style('width', '100%').style('min-height', '42px').style('padding', '6px 8px').style('font-size', '10px').style('border', '1px solid #e5e7eb').style('border-radius', '8px').style('background', '#f9fafb').style('resize', 'none').style('outline', 'none')
-      .property('value', promptState.positive)
-      .on('mousedown', ev => ev.stopPropagation())
-      .on('blur', () => syncPromptState(node, { note: noteArea.property('value') || '', positive: positiveArea.property('value') || '', negative: negativeArea.property('value') || '' }, emit))
+    const posHead = posWrap.append('xhtml:div').style('display', 'flex').style('align-items', 'center').style('gap', '6px')
+    posHead.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Positive cues')
+    positiveCount = posHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
+    buildTinyButton(posHead, '+', 'Add positive cue', () => {
+      positivePhrases = [...positivePhrases, { text: '', weight: 1.0 }]
+      buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
+      syncPromptStateFromUI()
+    })
+    positiveContainer = posWrap.append('xhtml:div')
 
     const negWrap = cuesRow.append('xhtml:div').style('display', 'flex').style('flex-direction', 'column').style('gap', '4px')
-    negWrap.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Negative cues')
-    negativeArea = negWrap.append('xhtml:textarea')
-      .attr('class', 'thin-scroll')
-      .style('width', '100%').style('min-height', '42px').style('padding', '6px 8px').style('font-size', '10px').style('border', '1px solid #e5e7eb').style('border-radius', '8px').style('background', '#f9fafb').style('resize', 'none').style('outline', 'none')
-      .property('value', promptState.negative)
-      .on('mousedown', ev => ev.stopPropagation())
-      .on('blur', () => syncPromptState(node, { note: noteArea.property('value') || '', positive: positiveArea.property('value') || '', negative: negativeArea.property('value') || '' }, emit))
+    const negHead = negWrap.append('xhtml:div').style('display', 'flex').style('align-items', 'center').style('gap', '6px')
+    negHead.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Negative cues')
+    negativeCount = negHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
+    buildTinyButton(negHead, '+', 'Add negative cue', () => {
+      negativePhrases = [...negativePhrases, { text: '', weight: 1.0 }]
+      buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
+      syncPromptStateFromUI()
+    })
+    negativeContainer = negWrap.append('xhtml:div')
+
+    buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
+    buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
 
     return sec
   }
 
+  
   function buildAssetsSection(parent, node, emit, state) {
     const sec = buildCollapsibleSection(parent, 'Assets', true, (controls) => {
       const uploader = createHiddenUploader(controls, node, emit, (localUrls) => {
@@ -1310,19 +1492,19 @@ export function renderTree(
       sec.content.append('xhtml:div').style('font-size', '10px').style('color', '#9ca3af').text('No adjustable parameters for the current function')
       return sec
     }
-    const grid = sec.content.append('xhtml:div').style('display', 'grid').style('grid-template-columns', '1fr 1fr').style('gap', '6px')
+    const grid = sec.content.append('xhtml:div').style('display', 'grid').style('grid-template-columns', '1fr').style('gap', '6px').style('width', '100%')
     keys.forEach(key => {
       const val = params[key]
       const field = grid.append('xhtml:div').style('display', 'flex').style('flex-direction', 'column').style('gap', '4px')
       field.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text(key.replace(/_/g, ' '))
       if (key === 'camera_pose') {
-        const select = field.append('xhtml:select').attr('class', 'node-input').attr('data-key', key).style('height', '24px').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('font-size', '10px').style('background', '#ffffff').on('mousedown', ev => ev.stopPropagation())
+        const select = field.append('xhtml:select').attr('class', 'node-input').attr('data-key', key).style('height', '24px').style('box-sizing', 'border-box').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('font-size', '10px').style('background', '#ffffff').on('mousedown', ev => ev.stopPropagation())
         ;['Pan Up','Pan Down','Pan Left','Pan Right','Zoom In','Zoom Out','Anti Clockwise (ACW)','ClockWise (CW)'].forEach(opt => {
           const option = select.append('xhtml:option').attr('value', opt).text(opt)
           if (val === opt) option.attr('selected', 'selected')
         })
       } else {
-        field.append('xhtml:input').attr('class', 'node-input').attr('data-key', key).attr('type', typeof val === 'number' ? 'number' : 'text').attr('value', val).style('height', '24px').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('font-size', '10px').style('padding', '0 6px').style('background', '#ffffff').on('mousedown', ev => ev.stopPropagation())
+        field.append('xhtml:input').attr('class', 'node-input').attr('data-key', key).attr('type', typeof val === 'number' ? 'number' : 'text').attr('value', val).style('height', '24px').style('box-sizing', 'border-box').style('border', '1px solid #d1d5db').style('border-radius', '6px').style('font-size', '10px').style('padding', '0 6px').style('background', '#ffffff').on('mousedown', ev => ev.stopPropagation())
       }
     })
     return sec
@@ -1345,7 +1527,7 @@ export function renderTree(
       emit('update:selectedIds', Array.from(selected))
     })
     buildHeader(card, d)
-    const body = card.append('xhtml:div').style('flex', '1 1 auto').style('min-height', '0').style('display', 'flex').style('flex-direction', 'column').style('gap', '6px').style('padding', '6px').style('overflow-y', 'auto')
+    const body = card.append('xhtml:div').style('flex', '1 1 auto').style('min-height', '0').style('display', 'flex').style('flex-direction', 'column').style('gap', '6px').style('padding', '6px').style('overflow-y', 'auto').style('overflow-x', 'hidden').style('width', '100%').style('box-sizing', 'border-box')
     buildFunctionSection(body, d, emit)
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')
@@ -1371,7 +1553,7 @@ export function renderTree(
       emit('update:selectedIds', Array.from(selected))
     })
     buildHeader(card, d)
-    const body = card.append('xhtml:div').style('flex', '1 1 auto').style('min-height', '0').style('display', 'flex').style('flex-direction', 'column').style('gap', '6px').style('padding', '6px').style('overflow-y', 'auto')
+    const body = card.append('xhtml:div').style('flex', '1 1 auto').style('min-height', '0').style('display', 'flex').style('flex-direction', 'column').style('gap', '6px').style('padding', '6px').style('overflow-y', 'auto').style('overflow-x', 'hidden').style('width', '100%').style('box-sizing', 'border-box')
     buildFunctionSection(body, d, emit)
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')

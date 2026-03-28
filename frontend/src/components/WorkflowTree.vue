@@ -768,7 +768,11 @@ watch(
 }
 
 svg {
+  display: block;
+  width: 100%;
+  height: 100%;
   cursor: default;
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
