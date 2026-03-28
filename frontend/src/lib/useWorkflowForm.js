@@ -2,8 +2,8 @@ import { ref, reactive, computed, watch } from 'vue'
 
 /* 全部模块 */
 const allModules = [
-  { id: 'AddText',name:'Text',type:'util'},
-  { id: 'AddWorkflow',name:'AddWorkflow',type:'util'},
+  // { id: 'AddText',name:'Text',type:'util'},
+  // { id: 'AddWorkflow',name:'AddWorkflow',type:'util'},
   { id: 'ImageCanny', name: 'ImageCanny', type: 'preprocess' },
   { id: 'RemoveBackground', name: 'RemoveBackground', type: 'preprocess' },
   { id: 'ImageMerging', name: 'ImageMerging', type: 'preprocess' },
@@ -23,12 +23,12 @@ const allModules = [
 
 /* 各模块参数定义 */
 export const workflowParameters = {
-  AddText: [
-    { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
-  ],
-  AddWorkflow: [
-    { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
-  ],
+  // AddText: [
+  //   { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
+  // ],
+  // AddWorkflow: [
+  //   { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
+  // ],
   TextToAudio: [
     { id: 'text', label: 'Audio Prompt', type: 'textarea', defaultValue: '', placeholder: 'Text to be converted to audio...' },
     { id: 'audio_seed', label: 'Seed', type: 'number', defaultValue: null, placeholder: 'Random' },

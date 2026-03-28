@@ -84,16 +84,16 @@ function getNodeCategory(node) {
   // 新增：复合节点特殊处理
   if (node.isComposite) return 'composite';
   
-  const hasIVMedia = !!(node.assets && node.assets.output && node.assets.output.images && node.assets.output.images.length > 0)
-  const hasAudioMedia = !!(node.assets && node.assets.output && node.assets.output.audio && node.assets.output.audio.length > 0)
-  const hasMedia = hasIVMedia || hasAudioMedia
-  const rawIVPath = hasIVMedia ? node.assets.output.images[0] : ''
-  const rawAudioPath = hasAudioMedia? node.assets.output.audio[0]:''
-  // 从路径推断媒体类型（因为原数据中没有 type 字段）
-  const mediaType = rawIVPath.includes('.png') || rawIVPath.includes('.jpg') || rawIVPath.includes('.jpeg') ? 'image' 
-    : rawIVPath.includes('.mp4') ? 'video' 
-    : rawAudioPath.includes('.mp3') || rawAudioPath.includes('.wav') ? 'audio' 
-    : ''
+  // const hasIVMedia = !!(node.assets && node.assets.output && node.assets.output.images && node.assets.output.images.length > 0)
+  // const hasAudioMedia = !!(node.assets && node.assets.output && node.assets.output.audio && node.assets.output.audio.length > 0)
+  // const hasMedia = hasIVMedia || hasAudioMedia
+  // const rawIVPath = hasIVMedia ? node.assets.output.images[0] : ''
+  // const rawAudioPath = hasAudioMedia? node.assets.output.audio[0]:''
+  // // 从路径推断媒体类型（因为原数据中没有 type 字段）
+  // const mediaType = rawIVPath.includes('.png') || rawIVPath.includes('.jpg') || rawIVPath.includes('.jpeg') ? 'image' 
+  //   : rawIVPath.includes('.mp4') ? 'video' 
+  //   : rawAudioPath.includes('.mp3') || rawAudioPath.includes('.wav') ? 'audio' 
+  //   : ''
   //console.log(`getNodeCategory,${mediaType}`)
   // const isAudioMedia =
   //   typeof rawAudioPath === 'string' &&
@@ -105,7 +105,7 @@ function getNodeCategory(node) {
   //   (rawIVPath.includes('.mp4') || rawIVPath.includes('subfolder=video') || mediaType === 'video')
   const isVideoMedia = (node.module_id=='TextGenerateVideo')||(node.module_id=='ImageGenerateVideo')||(node.module_id=='FLFrameToVideo')||(node.module_id=='TextToVideo'||(node.module_id=='CameraControl')||(node.module_id=='FrameInterpolation'))
 
-  const isImageMedia = hasMedia && !isAudioMedia && !isVideoMedia
+  const isImageMedia = (node.module_id!='AddText')&&(node.module_id!='AddWorkflow')&&!isAudioMedia&&!isVideoMedia;
 
   if (isAudioMedia) {
     //console.log(`audio`)
@@ -613,15 +613,15 @@ export function renderTree(
       nodeHeight = hasPrompt ? 175 : 110
     } else {
       nodeWidth = 260
-      if (hasMedia && hasPrompt) {
-        nodeHeight = BASE_CARD_HEIGHT + PROMPT_AREA_HEIGHT
-      } else if (hasMedia) {
-        nodeHeight = BASE_CARD_HEIGHT
-      } else if (hasPrompt) {
-        nodeHeight = 140
-      } else {
-        nodeHeight = 120
-      }
+      //if (hasMedia && hasPrompt) {
+      nodeHeight = BASE_CARD_HEIGHT + PROMPT_AREA_HEIGHT
+      // } else if (hasMedia) {
+      //   nodeHeight = BASE_CARD_HEIGHT
+      // } else if (hasPrompt) {
+      //   nodeHeight = 140
+      // } else {
+      //   nodeHeight = 120
+      // }
     }
 
     node.calculatedWidth = nodeWidth
