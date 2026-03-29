@@ -18,10 +18,12 @@ const NODE_COLORS = {
   image:      'var(--media-image)',
   video:      'var(--media-video)',
   audio:      'var(--media-audio)',
+  overlap:    'var(--media-overlap, #7385A9)',
 
   imageSoft:  'var(--media-image-soft)',
   videoSoft:  'var(--media-video-soft)',
   audioSoft:  'var(--media-audio-soft)',
+  overlapSoft:'var(--media-overlap-soft, #dbe2ee)',
 }
 
 // 允许在运行时刷新节点颜色（CSS 变量改变后调用）
@@ -31,6 +33,8 @@ export function refreshNodeColors() {
   NODE_COLORS.audio = getCSSVar('--media-audio', NODE_COLORS.audio);
   NODE_COLORS.text = getCSSVar('--media-text', NODE_COLORS.text);
   NODE_COLORS.auxBorder = getCSSVar('--media-aux-border', NODE_COLORS.auxBorder);
+  NODE_COLORS.overlap = getCSSVar('--media-overlap', NODE_COLORS.overlap);
+  NODE_COLORS.overlapSoft = getCSSVar('--media-overlap-soft', NODE_COLORS.overlapSoft);
 }
 
 // ---- 可配置的布局参数（默认值与之前一致） ----
@@ -72,10 +76,11 @@ function createDagreGraph() {
  * 读取 CSS 变量的工具函数
  * @param {string} name - 例如 '--media-image'
  */
-function getCSSVar(name) {
-  return getComputedStyle(document.documentElement)
+function getCSSVar(name, fallback = '') {
+  const value = getComputedStyle(document.documentElement)
     .getPropertyValue(name)
     .trim();
+  return value || fallback
 }
 
 
@@ -125,7 +130,7 @@ function getNodeCategory(node) {
 
 function getNodeBorderColor(node) {
   const cat = getNodeCategory(node)
-  if (cat === 'composite') return '#8b5cf6'
+  if (cat === 'composite') return NODE_COLORS.overlap
   if (cat === 'audio') return NODE_COLORS.audio
   if (cat === 'image') return NODE_COLORS.image
   if (cat === 'video') return NODE_COLORS.video
@@ -134,7 +139,7 @@ function getNodeBorderColor(node) {
 
 function getSelectionColor(node) {
   const cat = getNodeCategory(node)
-  if (cat === 'composite') return '#8b5cf6'
+  if (cat === 'composite') return NODE_COLORS.overlap
   if (cat === 'audio') return NODE_COLORS.audio
   if (cat === 'image') return NODE_COLORS.image
   if (cat === 'video') return NODE_COLORS.video
@@ -142,7 +147,7 @@ function getSelectionColor(node) {
 }
 
 function getNodeHeaderBaseLabel(node) {
-  if (node.isComposite) return node.label || `Overlap State (${node.combinedNodes?.length || 0})`
+  if (node.isComposite) return node.displayName || node.label || `Overlap State (${node.combinedNodes?.length || 0})`
 
   const mid = (node.module_id || '').toLowerCase()
 
@@ -596,9 +601,8 @@ export function renderTree(
       nodeWidth = 60
       nodeHeight = 60
     } else if (getNodeCategory(node) === 'composite') {
-      const count = node.combinedNodes?.length || node.sourceNodeIds?.length || 0
       nodeWidth = 300
-      nodeHeight = count > 4 ? 180 : 156
+      nodeHeight = Math.max(176, getCompositeHeight(node))
     } else if (cardType === 'textFull') {
       nodeWidth = 260
       nodeHeight = 150
@@ -804,7 +808,7 @@ export function renderTree(
     if (cat === 'image') headerBg = NODE_COLORS.imageSoft
     else if (cat === 'video') headerBg = NODE_COLORS.videoSoft
     else if (cat === 'audio') headerBg = NODE_COLORS.audioSoft
-    else if (cat === 'composite') headerBg = 'rgba(139, 92, 246, 0.10)'
+    else if (cat === 'composite') headerBg = NODE_COLORS.overlapSoft
 
     header
       .style('background-color', headerBg)
@@ -1736,15 +1740,12 @@ function renderAddWorkflowNode(gEl, d, selectedIds, emit) {
 }
 // --- 新增：渲染复合节点 ---
 function renderCompositeNode(gEl, d, selectedIds, emit) {
-  const stats = d.summary || {
-    image: 0,
-    video: 0,
-    audio: 0,
-    text: 0
-  }
-
-  const members = d.combinedNodes || []
-  const memberNames = members.map(n => n.module_id || n.label || 'Node')
+  const overlapColor = NODE_COLORS.overlap || '#7385A9'
+  const overlapSoft = NODE_COLORS.overlapSoft || '#dbe2ee'
+  const sourceItems = getCompositeSourceItems(d)
+  const visibleItems = sourceItems.slice(0, 4)
+  const remainingCount = Math.max(0, sourceItems.length - visibleItems.length)
+  const stats = d.summary || { image: 0, video: 0, audio: 0, text: 0 }
 
   const fo = gEl.append('foreignObject')
     .attr('width', d.calculatedWidth)
@@ -1760,9 +1761,9 @@ function renderCompositeNode(gEl, d, selectedIds, emit) {
     .style('height', '100%')
     .style('display', 'flex')
     .style('flex-direction', 'column')
-    .style('border', '2px solid #8b5cf6')
+    .style('border', `2px solid ${overlapColor}`)
     .style('border-radius', '12px')
-    .style('background', 'linear-gradient(180deg, #faf5ff 0%, #ffffff 100%)')
+    .style('background', '#ffffff')
     .style('box-sizing', 'border-box')
     .style('overflow', 'hidden')
     .style('cursor', 'pointer')
@@ -1770,135 +1771,161 @@ function renderCompositeNode(gEl, d, selectedIds, emit) {
     .style('-webkit-user-select', 'none')
 
   setCardSelected(card, d, isVisuallySelected(d, selectedIds))
+  addRightClickMenu(card, d, emit)
 
   card.on('click', ev => {
-    if (ev.target && ev.target.closest && ev.target.closest('button')) return
+    if (ev.target && ev.target.closest && ev.target.closest('button, img, video, input, textarea, select')) return
     ev.stopPropagation()
     const selected = new Set(selectedIds)
     const on = selected.has(d.id)
     if (on) selected.delete(d.id)
-    else selected.add(d.id)
+    else if (selected.size < 2) selected.add(d.id)
+    setCardSelected(card, d, !on)
     emit('update:selectedIds', Array.from(selected))
   })
 
-  const header = card.append('xhtml:div')
-    .style('display', 'flex')
-    .style('justify-content', 'space-between')
-    .style('align-items', 'center')
-    .style('padding', '10px 12px 8px 12px')
-    .style('border-bottom', '1px solid #ede9fe')
-    .style('background', 'rgba(139,92,246,0.06)')
-
-  const left = header.append('xhtml:div')
-    .style('display', 'flex')
-    .style('flex-direction', 'column')
-    .style('gap', '2px')
-
-  left.append('xhtml:div')
-    .style('font-size', '12px')
-    .style('font-weight', '700')
-    .style('color', '#5b21b6')
-    .text(d.label || `Group · ${members.length}`)
-
-  left.append('xhtml:div')
-    .style('font-size', '10px')
-    .style('color', '#7c3aed')
-    .text('Locally composed overlap state')
-
-  header.append('xhtml:div')
-    .style('font-size', '10px')
-    .style('font-weight', '700')
-    .style('color', '#6d28d9')
-    .style('padding', '3px 8px')
-    .style('border-radius', '999px')
-    .style('background', '#ede9fe')
-    .text(`${members.length} nodes`)
+  buildHeader(card, d)
 
   const body = card.append('xhtml:div')
     .style('flex', '1 1 auto')
+    .style('min-height', '0')
     .style('display', 'flex')
     .style('flex-direction', 'column')
-    .style('gap', '10px')
-    .style('padding', '10px 12px')
+    .style('gap', '8px')
+    .style('padding', '8px')
+    .style('overflow', 'visible')
+    .style('box-sizing', 'border-box')
 
-  const chipRow = body.append('xhtml:div')
-    .style('display', 'flex')
-    .style('flex-wrap', 'wrap')
-    .style('gap', '6px')
+  const sources = buildCollapsibleSection(body, 'Sources', true, (controls) => {
+    buildTinyButton(controls, 'Detach', 'Separate overlap state', () => emit('ungroup-node', d.id))
+      .style('min-width', 'auto')
+      .style('padding', '0 8px')
+      .style('height', '18px')
+      .style('border-color', overlapColor)
+      .style('color', '#334155')
+      .style('background', '#ffffff')
+      .style('font-weight', '600')
+  })
 
-  const chips = [
-    { label: `Image ${stats.image}`, bg: '#eff6ff', color: '#1d4ed8' },
-    { label: `Video ${stats.video}`, bg: '#ecfdf5', color: '#047857' },
-    { label: `Audio ${stats.audio}`, bg: '#eff6ff', color: '#2563eb' },
-    { label: `Text ${stats.text}`, bg: '#f8fafc', color: '#475569' }
-  ]
+  const grid = sources.content.append('xhtml:div')
+    .style('display', 'grid')
+    .style('grid-template-columns', '1fr 1fr')
+    .style('grid-auto-rows', sourceItems.length <= 2 ? '88px' : '76px')
+    .style('gap', '8px')
 
-  chips.forEach(chip => {
-    chipRow.append('xhtml:span')
+  visibleItems.forEach(item => {
+    const tile = grid.append('xhtml:div')
+      .style('position', 'relative')
+      .style('height', sourceItems.length <= 2 ? '88px' : '76px')
+      .style('border-radius', '10px')
+      .style('overflow', 'hidden')
+      .style('border', '1px solid rgba(51,65,85,0.12)')
+      .style('background', '#ffffff')
+      .style('cursor', item.url ? 'pointer' : 'default')
+      .on('mousedown', ev => ev.stopPropagation())
+
+    if (item.url) tile.on('click', ev => { ev.stopPropagation(); emit('open-preview', item.url, item.type) })
+
+    if (item.type === 'image') {
+      tile.append('xhtml:img')
+        .attr('src', item.url)
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('object-fit', 'cover')
+        .style('display', 'block')
+    } else if (item.type === 'video') {
+      tile.append('xhtml:video')
+        .attr('src', item.url)
+        .attr('autoplay', true)
+        .attr('muted', true)
+        .attr('loop', true)
+        .attr('playsinline', true)
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('object-fit', 'cover')
+        .style('display', 'block')
+    } else if (item.type === 'audio') {
+      tile.append('xhtml:div')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
+        .style('font-size', '18px')
+        .style('color', '#475569')
+        .text('♪')
+    } else {
+      tile.append('xhtml:div')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
+        .style('padding', '8px')
+        .style('text-align', 'center')
+        .style('font-size', '10px')
+        .style('color', '#64748b')
+        .text(item.label)
+    }
+
+    tile.append('xhtml:div')
+      .style('position', 'absolute')
+      .style('left', '6px')
+      .style('right', '6px')
+      .style('bottom', '6px')
+      .style('padding', '3px 8px')
+      .style('border-radius', '999px')
+      .style('background', 'rgba(255,255,255,0.86)')
+      .style('backdrop-filter', 'blur(4px)')
       .style('font-size', '10px')
       .style('font-weight', '600')
-      .style('padding', '4px 8px')
-      .style('border-radius', '999px')
-      .style('background', chip.bg)
-      .style('color', chip.color)
-      .text(chip.label)
-  })
-
-  const memberWrap = body.append('xhtml:div')
-    .style('display', 'flex')
-    .style('flex-wrap', 'wrap')
-    .style('gap', '6px')
-
-  memberNames.slice(0, 5).forEach(name => {
-    memberWrap.append('xhtml:span')
-      .style('font-size', '10px')
-      .style('padding', '4px 8px')
-      .style('border-radius', '999px')
-      .style('background', '#ffffff')
-      .style('border', '1px solid #ddd6fe')
-      .style('color', '#4c1d95')
-      .style('max-width', '120px')
+      .style('color', '#475569')
+      .style('white-space', 'nowrap')
       .style('overflow', 'hidden')
       .style('text-overflow', 'ellipsis')
-      .style('white-space', 'nowrap')
-      .text(name)
+      .text(item.label)
   })
 
-  if (memberNames.length > 5) {
-    memberWrap.append('xhtml:span')
-      .style('font-size', '10px')
-      .style('padding', '4px 8px')
-      .style('border-radius', '999px')
-      .style('background', '#f5f3ff')
-      .style('color', '#6d28d9')
-      .text(`+${memberNames.length - 5}`)
+  if (remainingCount > 0) {
+    const tail = grid.append('xhtml:div')
+      .style('height', sourceItems.length <= 2 ? '88px' : '76px')
+      .style('border-radius', '10px')
+      .style('border', '1px dashed rgba(51,65,85,0.18)')
+      .style('display', 'flex')
+      .style('align-items', 'center')
+      .style('justify-content', 'center')
+      .style('font-size', '18px')
+      .style('font-weight', '700')
+      .style('color', '#94a3b8')
+      .style('background', '#f8fafc')
+      .text(`+${remainingCount}`)
   }
 
-  const footer = body.append('xhtml:div')
-    .style('margin-top', 'auto')
-    .style('display', 'flex')
-    .style('justify-content', 'space-between')
-    .style('align-items', 'center')
+  const badges = []
+  if ((stats.image || 0) > 0) badges.push({ label: `${stats.image} image`, bg: '#eff6ff', color: '#1d4ed8' })
+  if ((stats.video || 0) > 0) badges.push({ label: `${stats.video} video`, bg: '#ecfdf5', color: '#047857' })
+  if ((stats.audio || 0) > 0) badges.push({ label: `${stats.audio} audio`, bg: '#eff6ff', color: '#2563eb' })
+  if ((stats.text || 0) > 0) badges.push({ label: `${stats.text} text`, bg: '#f8fafc', color: '#475569' })
 
-  footer.append('xhtml:div')
-    .style('font-size', '10px')
-    .style('color', '#64748b')
-    .text('Local only · no DB write')
+  if (badges.length) {
+    const badgeRow = body.append('xhtml:div')
+      .style('display', 'flex')
+      .style('flex-wrap', 'wrap')
+      .style('gap', '6px')
+      .style('margin-top', '2px')
+      .style('padding-bottom', '2px')
 
-  footer.append('xhtml:button')
-    .style('padding', '5px 12px')
-    .style('border', 'none')
-    .style('border-radius', '999px')
-    .style('background', '#8b5cf6')
-    .style('color', '#ffffff')
-    .style('font-size', '10px')
-    .style('font-weight', '700')
-    .style('cursor', 'pointer')
-    .text('Detach')
-    .on('click', ev => {
-      ev.stopPropagation()
-      emit('ungroup-node', d.id)
+    badges.forEach(badge => {
+      badgeRow.append('xhtml:span')
+        .style('font-size', '10px')
+        .style('font-weight', '600')
+        .style('padding', '4px 8px')
+        .style('border-radius', '999px')
+        .style('background', badge.bg)
+        .style('color', badge.color)
+        .text(badge.label)
     })
+  }
 }
 
 // --- 辅助函数：渲染媒体内容（图片/音频/文本） ---

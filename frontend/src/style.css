@@ -30,6 +30,8 @@ body {
   --media-image-soft: #8FB7E8;  /* #8FB7E8*/
   --media-video-soft: #8FD1B4; /* #8FD1B4*/
   --media-audio-soft: #F4A7A8; /* #F4A7A8*/
+  --media-overlap: #b195f4;
+  --media-overlap-soft: #EDE9FE;
 }
 
 /* ===================== workflow 节点卡片 ===================== */

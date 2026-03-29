@@ -30,7 +30,7 @@ import LeftLayoutSettingsPane from './LeftLayoutSettingsPane.vue'
 const handleApplyLayoutSettings = (payload: {
   horizontalGap: number
   verticalGap: number
-  colors: { image: string; video: string; audio: string }
+  colors: { image: string; video: string; audio: string; overlap: string }
 }) => {
   window.dispatchEvent(new CustomEvent('layout-settings-changed', { detail: payload }))
 }

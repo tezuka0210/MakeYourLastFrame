@@ -90,6 +90,19 @@
             <span class="color-hex">{{ audioColor }}</span>
           </div>
         </div>
+
+        <!-- Colors: Overlap State -->
+        <div class="form-group form-group-inline">
+          <span class="form-label-inline">Overlap State Color</span>
+          <div class="color-control">
+            <input
+              type="color"
+              v-model="overlapColor"
+              class="color-input"
+            />
+            <span class="color-hex">{{ overlapColor }}</span>
+          </div>
+        </div>
       </div>
 
       <div class="settings-footer">
@@ -108,7 +121,7 @@ const emit = defineEmits<{
   (e: 'apply-layout-settings', payload: {
     horizontalGap: number
     verticalGap: number
-    colors: { image: string; video: string; audio: string }
+    colors: { image: string; video: string; audio: string; overlap: string }
   }): void
 }>()
 
@@ -120,6 +133,7 @@ const verticalGap = ref(120)
 const imageColor = ref('#5F96DB')
 const videoColor = ref('#5ABF8E')
 const audioColor = ref('#E06C6E')
+const overlapColor = ref('#7385A9')
 
 onMounted(() => {
   const rootStyle = getComputedStyle(document.documentElement)
@@ -127,10 +141,12 @@ onMounted(() => {
   const img = rootStyle.getPropertyValue('--media-image').trim()
   const vid = rootStyle.getPropertyValue('--media-video').trim()
   const aud = rootStyle.getPropertyValue('--media-audio').trim()
+  const ovl = rootStyle.getPropertyValue('--media-overlap').trim()
 
   if (img) imageColor.value = normalizeColor(img)
   if (vid) videoColor.value = normalizeColor(vid)
   if (aud) audioColor.value = normalizeColor(aud)
+  if (ovl) overlapColor.value = normalizeColor(ovl)
 })
 
 function normalizeColor(value: string): string {
@@ -170,15 +186,18 @@ const applySettings = () => {
   document.documentElement.style.setProperty('--media-image', imageColor.value)
   document.documentElement.style.setProperty('--media-video', videoColor.value)
   document.documentElement.style.setProperty('--media-audio', audioColor.value)
+  document.documentElement.style.setProperty('--media-overlap', overlapColor.value)
 
   // 2) soft 颜色写入 CSS 变量（给卡片标题、渐变、背景用）
   const imageSoft = makeSoftColor(imageColor.value, 0.45)
   const videoSoft = makeSoftColor(videoColor.value, 0.45)
   const audioSoft = makeSoftColor(audioColor.value, 0.45)
+  const overlapSoft = makeSoftColor(overlapColor.value, 0.45)
 
   document.documentElement.style.setProperty('--media-image-soft', imageSoft)
   document.documentElement.style.setProperty('--media-video-soft', videoSoft)
   document.documentElement.style.setProperty('--media-audio-soft', audioSoft)
+  document.documentElement.style.setProperty('--media-overlap-soft', overlapSoft)
 
   // 3) 通过 window 事件广播布局 & 颜色更新（WorkflowTree.vue 监听）
   window.dispatchEvent(
@@ -190,6 +209,7 @@ const applySettings = () => {
           image: imageColor.value,
           video: videoColor.value,
           audio: audioColor.value,
+          overlap: overlapColor.value,
         },
       },
     }),
@@ -203,6 +223,7 @@ const applySettings = () => {
       image: imageColor.value,
       video: videoColor.value,
       audio: audioColor.value,
+          overlap: overlapColor.value,
     },
   })
 }
