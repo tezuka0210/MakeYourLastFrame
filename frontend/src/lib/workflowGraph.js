@@ -147,9 +147,11 @@ function getSelectionColor(node) {
 }
 
 function getNodeHeaderBaseLabel(node) {
-  if (node.isComposite) {
-    return node.displayName || node.label || `Overlap State (${node.combinedNodes?.length || 0})`
-  }
+  if (node.isComposite) return `Overlap (${node.combinedNodes?.length || 0})`;
+  if (node.module_id === 'AddText') return 'Note';
+  if (node.module_id === 'AddWorkflow') return 'Plan';
+  return node.displayName || node.module_id || 'State';
+
 
   const mid = (node.module_id || '').toLowerCase()
 
@@ -2145,4 +2147,72 @@ function renderMediaContent(container, data) {
             }
         });
     }, 100);
+}
+
+
+function addResizeHandle(card, node, svgElement, allNodesData) {
+  const handle = card.append('xhtml:div')
+    .style('position', 'absolute')
+    .style('width', '12px')
+    .style('height', '12px')
+    .style('right', '2px')
+    .style('bottom', '2px')
+    .style('cursor', 'ns-resize')
+    .style('background', '#9ca3af')
+    .style('border-radius', '50%');
+
+  handle.on('mousedown', function (event) {
+    event.stopPropagation();
+    const startY = event.clientY;
+    const startHeight = node.calculatedHeight;
+
+    function onMouseMove(ev) {
+      const dy = ev.clientY - startY;
+      node.calculatedHeight = Math.max(60, startHeight + dy);
+      updateVisibility(svgElement, allNodesData);
+    }
+
+    function onMouseUp() {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    }
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+// === 最终修正版选择与合并逻辑 ===
+// 点击或方框选择节点
+function toggleNodeSelection(node, selectedIds, emit) {
+  if (node.isComposite) return; // composite 节点不允许选中
+  const selected = new Set(selectedIds);
+  if (selected.has(node.id)) selected.delete(node.id);
+  else selected.add(node.id);
+  emit('update:selectedIds', Array.from(selected));
+}
+
+// 合并当前选择
+function mergeSelectedNodes(allNodesData, selectedIds, emit) {
+  // 只合并普通节点，不包括已有 composite 节点
+  const nodesToMerge = allNodesData.filter(
+    n => selectedIds.includes(n.id) && !n.isComposite
+  );
+  if (nodesToMerge.length < 2) return;
+
+  const newComposite = {
+    id: generateUniqueId(),
+    isComposite: true,
+    combinedNodes: nodesToMerge,
+    displayName: 'Overlap',
+    module_id: 'CompositeNode'
+  };
+
+  allNodesData.push(newComposite);
+
+  // 清空选择状态，保证下一次选择独立
+  emit('update:selectedIds', []);
+
+  // 刷新树
+  emit('refresh-tree', allNodesData);
 }
