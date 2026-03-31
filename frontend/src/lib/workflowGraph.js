@@ -2578,7 +2578,7 @@ function mergeSelectedNodes(allNodesData, selectedIds, emit, svgElement = null) 
     id: generateUniqueId(),
     isComposite: true,
     combinedNodes: nodesToMerge,
-    displayName: 'Overlap',
+    displayName: 'Merged',
     module_id: 'CompositeNode'
   };
 
