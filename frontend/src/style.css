@@ -641,6 +641,11 @@ body {
   background-color: #f3f4f6;
 }
 
+.phrase-input-wide {
+  width: 100%;
+  min-width: 0;
+}
+
 /* ========== Prompt 折叠小节：Positive / Negative Prompt 头部 ========== */
 
 /* .prompt-section {

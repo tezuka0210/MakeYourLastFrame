@@ -1606,7 +1606,7 @@ function addMediaBoxResizeHandle(box, boxState) {
       list.forEach((phrase, idx) => {
         const row = container.append('xhtml:div')
           .style('display', 'grid')
-          .style('grid-template-columns', '1fr 44px 18px 18px')
+          .style('grid-template-columns', '1fr 18px 18px')
           .style('gap', '4px')
           .style('align-items', 'center')
           .style('margin-bottom', '4px')
@@ -1614,6 +1614,7 @@ function addMediaBoxResizeHandle(box, boxState) {
         row.append('xhtml:input')
           .attr('type', 'text')
           .attr('value', phrase.text || '')
+          .attr('class', 'phrase-input phrase-input-wide')
           .style('height', '24px')
           .style('border', '1px solid #e5e7eb')
           .style('border-radius', '6px')
@@ -1623,30 +1624,11 @@ function addMediaBoxResizeHandle(box, boxState) {
           .on('mousedown', ev => ev.stopPropagation())
           .on('input', function () {
             const next = [...listRefGetter()]
-            next[idx] = { ...next[idx], text: this.value }
-            listRefSetter(next)
-            syncPromptStateFromUI()
-          })
-
-        row.append('xhtml:input')
-          .attr('type', 'number')
-          .attr('min', '0.0')
-          .attr('max', '1.9')
-          .attr('step', '0.1')
-          .attr('value', Number.isFinite(phrase.weight) ? phrase.weight.toFixed(1) : '1.0')
-          .style('height', '24px')
-          .style('border', '1px solid #e5e7eb')
-          .style('border-radius', '6px')
-          .style('padding', '0 4px')
-          .style('font-size', '10px')
-          .style('background', '#ffffff')
-          .on('mousedown', ev => ev.stopPropagation())
-          .on('input', function () {
-            let v = parseFloat(this.value)
-            if (!Number.isFinite(v)) v = 1.0
-            v = Math.max(0.0, Math.min(1.9, v))
-            const next = [...listRefGetter()]
-            next[idx] = { ...next[idx], weight: v }
+            next[idx] = {
+              ...next[idx],
+              text: this.value,
+              weight: Number.isFinite(next[idx]?.weight) ? next[idx].weight : 1.0
+            }
             listRefSetter(next)
             syncPromptStateFromUI()
           })
