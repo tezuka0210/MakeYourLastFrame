@@ -840,6 +840,14 @@ export function renderTree(
     )
   }
 
+  function isSegmentOnlyNode(node) {
+    const mid = String(node?.module_id || '').toLowerCase()
+    return (
+      mid.includes('segment')
+      || mid.includes('segmentelement')
+      || mid === 'segmentelement'
+    )
+  }
 
   function getLinkStyle() {
     return { color: defaultLinkColor, id: 'url(#arrowhead-default)' }
@@ -1277,8 +1285,8 @@ function applyMediaBoxStyle(sel, boxState) {
     .style('border-radius', '8px')
     .style('background', '#ffffff')
     .style('overflow', 'visible')
-    .style('padding-right', '18px')
-    .style('padding-bottom', '18px')
+    .style('padding-right', '5px')
+    .style('padding-bottom', '5px')
 }
 
 function buildMediaGrid(box, boxState) {
@@ -1835,9 +1843,43 @@ function addMediaBoxResizeHandle(box, boxState) {
     const outputUrls = Array.isArray(state?.outputUrls) ? state.outputUrls : []
     const hasOutput = outputUrls.length > 0
     const hasSegment = hasSegmentData(node)
+    const isSegmentNode = isSegmentOnlyNode(node)
     const segmentHostKey = getSegmentHostKey(node)
 
-    // 1) 先显示 generate 结果
+    // 情况 A：segment 节点
+    // 只显示 segment 内容，不显示原 generate results
+    if (isSegmentNode) {
+      const { box } = createMediaBox(root, node, 'results')
+
+      box.append('xhtml:div')
+        .attr('class', 'segment-empty-placeholder')
+        .style('position', 'absolute')
+        .style('left', '10px')
+        .style('top', '10px')
+        .style('font-size', '10px')
+        .style('color', '#9ca3af')
+        .style('pointer-events', 'none')
+        .text(hasSegment ? '' : 'No segmented results yet')
+
+      box.append('xhtml:div')
+        .attr('id', `entities-${segmentHostKey}`)
+        .attr('class', 'segment-results-host')
+        .style('position', 'absolute')
+        .style('top', '6px')
+        .style('left', '6px')
+        .style('right', '16px')
+        .style('bottom', '16px')
+        .style('display', 'flex')
+        .style('flex-wrap', 'wrap')
+        .style('align-content', 'flex-start')
+        .style('gap', '6px')
+        .style('overflow', 'auto')
+        .style('pointer-events', 'auto')
+
+      return sec
+    }
+
+    // 情况 B：普通生成节点
     if (hasOutput) {
       renderThumbRow(root, outputUrls, {
         emptyText: 'No generated results yet',
@@ -1854,44 +1896,6 @@ function addMediaBoxResizeHandle(box, boxState) {
         node,
         boxKey: 'results'
       })
-    }
-
-    // 2) 再显示 segment 结果
-    if (hasSegment) {
-      const segWrap = root.append('xhtml:div')
-        .style('display', 'flex')
-        .style('flex-direction', 'column')
-        .style('gap', '4px')
-
-      segWrap.append('xhtml:div')
-        .style('font-size', '10px')
-        .style('font-weight', '600')
-        .style('color', '#6b7280')
-        .text('Segments')
-
-      const { box, grid } = createMediaBox(segWrap, node, 'segments')
-
-      grid.append('xhtml:div')
-        .attr('class', 'segment-empty-placeholder')
-        .style('display', 'flex')
-        .style('align-items', 'center')
-        .style('justify-content', 'flex-start')
-        .style('font-size', '10px')
-        .style('color', '#9ca3af')
-        .style('grid-column', '1 / -1')
-        .text('No segmented entities yet')
-
-      box.append('xhtml:div')
-        .attr('id', `entities-${segmentHostKey}`)
-        .style('position', 'absolute')
-        .style('inset', '6px')
-        .style('display', 'flex')
-        .style('flex-wrap', 'wrap')
-        .style('align-content', 'flex-start')
-        .style('gap', '6px')
-        .style('overflow', 'auto')
-        .style('pointer-events', 'auto')
-        .style('z-index', '2')
     }
 
     return sec
@@ -2527,18 +2531,43 @@ function renderMediaContent(container, data) {
       if (!hasSegmentData(node)) return
 
       const segmentHostKey = getSegmentHostKey(node)
-
       updateEntityDisplay(segmentHostKey, node.assets.segmented, node)
 
       const host = document.getElementById(`entities-${segmentHostKey}`)
       const placeholder = host?.parentElement?.querySelector('.segment-empty-placeholder')
 
-      if (host && placeholder && host.children.length > 0) {
-        placeholder.style.display = 'none'
+      if (!host) return
+
+      if (host && host.children.length > 0) {
+        if (placeholder) placeholder.style.display = 'none'
+
+        host.style.display = 'flex'
+        host.style.flexWrap = 'wrap'
+        host.style.alignContent = 'flex-start'
+        host.style.gap = '6px'
+        host.style.overflow = 'auto'
+
+        Array.from(host.children).forEach(child => {
+          child.style.width = '56px'
+          child.style.height = '56px'
+          child.style.flex = '0 0 auto'
+          child.style.boxSizing = 'border-box'
+          child.style.overflow = 'hidden'
+          child.style.borderRadius = '8px'
+
+          const img = child.querySelector('img')
+          if (img) {
+            img.style.width = '100%'
+            img.style.height = '100%'
+            img.style.objectFit = 'cover'
+            img.style.display = 'block'
+          }
+        })
       }
+
     })
   }, 100)
-  
+
 }
 
 
