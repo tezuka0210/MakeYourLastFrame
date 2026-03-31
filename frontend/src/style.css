@@ -1125,3 +1125,15 @@ body {
   align-items: center !important;
   justify-content: center !important;
 }
+
+.segment-results-host {
+  overflow: auto;
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* IE / old Edge */
+}
+
+.segment-results-host::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;              /* Chrome / Safari / Edge */
+}
