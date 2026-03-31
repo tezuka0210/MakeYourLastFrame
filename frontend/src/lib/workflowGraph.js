@@ -18,12 +18,12 @@ const NODE_COLORS = {
   image:      'var(--media-image)',
   video:      'var(--media-video)',
   audio:      'var(--media-audio)',
-  overlap:    'var(--media-overlap, #7385A9)',
+  overlap:    'var(--media-overlap)',
 
   imageSoft:  'var(--media-image-soft)',
   videoSoft:  'var(--media-video-soft)',
   audioSoft:  'var(--media-audio-soft)',
-  overlapSoft:'var(--media-overlap-soft, #dbe2ee)',
+  overlapSoft:'var(--media-overlap-soft)',
 }
 
 // 允许在运行时刷新节点颜色（CSS 变量改变后调用）

@@ -128,114 +128,77 @@ function deleteSession(id: number) {
 </script>
 
 <style scoped>
-/* 全局样式重置和基础设置 */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  border-radius: inherit;
+  font-family: Inter, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
 }
 
-/* 容器样式：和另外两张卡片保持一致，高度由父级 h-full 控制 */
 .container {
   width: 100%;
-  max-width: none;     /* 关键：去掉 380px 限制 */
-  margin: 0;           /* 关键：不要居中 */
-  padding: 2px 8px;        /* 建议：把横向 padding 交给 LeftPane 统一控制 */
   height: 100%;
-  min-height: 0;       /* 关键：允许内部滚动区域收缩 */
+  min-height: 0;
 }
 
-/* 卡片主体：改成 flex column + height:100% */
 .session-card {
   width: 100%;
-  background: #ffffff;
-  border-radius: 20px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-  border: 1px solid #f0f0f0;
-  overflow: hidden;
-  transition: all 0.3s ease;
-  display: flex;           /* ✅ 变成 flex 容器 */
+  height: 100%;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
-  height: 100%;            /* ✅ 撑满 container，高度由 LeftPane 控制 */
+  background: #f7f7f8;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  overflow: hidden;
 }
 
-.session-card:hover {
-  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
-}
-
-/* 卡片头部 */
 .card-header {
-  padding: 10px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #f8f9fa;
-  border-radius: 20px 20px 0 0;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #eceef1;
+  background: #f7f7f8;
 }
 
 .header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 2px;
+  margin-bottom: 8px;
 }
 
 .header-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333333;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  letter-spacing: 0.3px;
-}
-
-.title-icon {
-  width: 16px;
-  height: 16px;
-  color: #6b7280;
-  background: #f3f4f6;
-  border-radius: 50%;
-  padding: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2f3946;
 }
 
 .session-count {
-  font-size: 12px;
-  color: #6b7280;
-  background: #f3f4f6;
-  padding: 2px 8px;
-  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b95a5;
+  background: #f1f3f5;
+  border: 1px solid #e3e7ec;
+  padding: 3px 8px;
+  border-radius: 999px;
 }
 
-/* 新建会话按钮：去掉 aspect-ratio，做成和 Apply 类似的小按钮 */
 .new-session-btn {
-  margin-top: 4px;
   width: 100%;
-  padding: 4px 0;
+  min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #d9dee5;
   border-radius: 12px;
-  background: white;
-  color: #6b7280;
+  background: #fbfbfc;
+  color: #5b6575;
   cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.new-session-btn.clicked {
-  border-color: #6b7280;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .new-session-btn:hover {
-  border-color: #6b7280;
-  background: white;
-  color: #4b5563;
-  box-shadow: 0 2px 8px rgba(107, 114, 128, 0.1);
-}
-
-.new-session-btn:active {
-  transform: scale(0.98);
+  background: #ffffff;
+  border-color: #cfd6de;
 }
 
 .btn-content {
@@ -245,175 +208,138 @@ function deleteSession(id: number) {
 }
 
 .btn-icon {
-  width: 18px;
-  height: 18px;
-  transition: transform 0.3s ease;
-  border-radius: 50%;
-  padding: 2px;
-  color: #6b7280;
-}
-
-.new-session-btn:hover .btn-icon {
-  transform: rotate(90deg);
+  width: 15px;
+  height: 15px;
+  color: #7b8798;
 }
 
 .btn-text {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-/* 会话列表区域：在 card 内部用 flex:1 + overflow 滚动 */
 .session-list {
-  flex: 1;                 /* ✅ 占据除 header 以外的全部空间 */
-  min-height: 0;           /* ✅ 配合 flex 允许收缩 */
-  overflow-y: auto;        /* ✅ 这里滚动 */
-  padding: 12px 16px 16px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  scroll-behavior: smooth;
+  gap: 2px;
 }
 
-/* 自定义滚动条 */
 .session-list::-webkit-scrollbar {
   width: 6px;
 }
 
 .session-list::-webkit-scrollbar-track {
-  background: #f8f8f8;
-  border-radius: 3px;
-  margin: 4px 0;
+  background: transparent;
 }
 
 .session-list::-webkit-scrollbar-thumb {
-  background: #e0e0e0;
-  border-radius: 3px;
+  background: #d2d7de;
+  border-radius: 999px;
 }
 
-.session-list::-webkit-scrollbar-thumb:hover {
-  background: #d0d0d0;
-}
-
-/* 会话列表项 */
 .session-item {
-  padding: 2px 4px;
-  border-radius: 16px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  background: white;
-  color: #858b99;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .session-item:hover {
-  background: white;
-  border-color: #e5e7eb;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: #f0f2f5;
 }
 
 .session-item.active {
-  background: white;
-  color: #272b33;
-  box-shadow: 0 2px 8px rgba(107, 114, 128, 0.1);
-}
-
-.session-item:focus {
-  outline: 2px solid rgba(107, 114, 128, 0.5);
-  outline-offset: 2px;
+  background: #ececec;
+  color: #1f2937;
 }
 
 .status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #d1d5db;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #c7ced8;
+  flex-shrink: 0;
 }
 
 .session-item.active .status-dot {
-  background: #272b33;
+  background: #4b5563;
 }
 
 .session-title {
-  line-height: 1.4;
-  word-break: break-word;
   flex: 1;
+  min-width: 0;
+  font-size: 12px;
   font-weight: 500;
-  font-size: 14px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
-/* 空状态 */
+.delete-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  opacity: 0;
+  color: #8a94a6;
+  background: transparent;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.session-item:hover .delete-btn,
+.session-item.active .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn:hover {
+  background: #e8ebef;
+}
+
+.delete-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .empty-state {
+  min-height: 96px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 140px;
-  color: #9ca3af;
-  background: #f9fafb;
-  border-radius: 16px;
-  padding: 24px;
+  border-radius: 10px;
+  color: #9aa3b2;
+  text-align: center;
+  padding: 12px;
 }
 
 .empty-icon {
-  width: 40px;
-  height: 40px;
-  margin-bottom: 12px;
-  opacity: 0.5;
-  background: #f3f4f6;
-  border-radius: 50%;
-  padding: 6px;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 6px;
+  opacity: 0.65;
 }
 
 .empty-title {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .empty-desc {
-  font-size: 12px;
   margin-top: 4px;
-  opacity: 0.7;
+  font-size: 11px;
+  line-height: 1.35;
 }
-
-/* 删除按钮 */
-.delete-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  opacity: 0;
-  transition: all 0.2s ease;
-  transform: scale(0.9);
-  background: #e5e7eb;
-  color: #4b5563;
-}
-
-.session-item:hover .delete-btn {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.delete-btn:hover {
-  background: #d1d5db;
-}
-
-.session-item.active .delete-btn {
-  background: #ffffff;
-  color: #4b5563;
-}
-
-.session-item.active .delete-btn:hover {
-  background: #ffffff;
-}
-
-.delete-icon {
-  width: 16px;
-  height: 16px;
-}
-
 </style>

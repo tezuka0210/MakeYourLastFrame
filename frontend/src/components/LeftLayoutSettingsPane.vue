@@ -235,212 +235,172 @@ const applySettings = () => {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  border-radius: inherit;
+  font-family: Inter, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
 }
 
 .container {
   width: 100%;
-  max-width: 380px;
-  margin: 0 auto;
-  padding: 2px 8px;
+  height: 100%;
+  min-height: 0;
 }
 
 .settings-card {
   width: 100%;
-  background: #ffffff;
-  border-radius: 20px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-  border: 1px solid #f0f0f0;
-  overflow: hidden;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  background: #f7f7f8;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  overflow: hidden;
 }
 
 .settings-header {
-  padding: 10px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #f8f9fa;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #eceef1;
+  background: #f7f7f8;
 }
 
 .header-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #374151;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: #6b7280;
 }
 
 .settings-content {
   flex: 1;
   min-height: 0;
-  overflow-y: hidden;
-  padding: 10px;
-  gap: 4px; /* 稍微压缩垂直间距 */
+  overflow-y: auto;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
-
 
 .settings-content::-webkit-scrollbar {
   width: 6px;
 }
 
 .settings-content::-webkit-scrollbar-track {
-  background: #f8f8f8;
-  border-radius: 3px;
-  margin: 4px 0;
+  background: transparent;
 }
 
 .settings-content::-webkit-scrollbar-thumb {
-  background: #e0e0e0;
-  border-radius: 3px;
-}
-
-.settings-content::-webkit-scrollbar-thumb:hover {
-  background: #d0d0d0;
+  background: #d2d7de;
+  border-radius: 999px;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .form-group-inline {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
-
-.form-label {
-  font-size: 10px;
-  font-weight: 700;
-  color: #9ca3af;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
+.form-label,
 .form-label-inline {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: #4b5563;
-  white-space: nowrap;
+  line-height: 1.35;
 }
 
-/* 布局控制：slider + number */
 .layout-control {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 10px;
   align-items: center;
-  gap: 8px;
 }
 
 .layout-slider {
-  flex: 1;
-  height: 4px;
-  background: #e5e7eb;
-  border-radius: 2px;
-  appearance: none;
+  width: 100%;
+  accent-color: #8f96a3;
   cursor: pointer;
-}
-
-.layout-slider::-webkit-slider-thumb {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #6b7280;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.layout-slider::-webkit-slider-thumb:hover {
-  background: #4b5563;
-  transform: scale(1.05);
 }
 
 .layout-input {
-  width: 56px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 4px 6px;
-  font-size: 13px;
+  width: 100%;
+  height: 28px;
+  border: 1px solid #d6dbe2;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
   text-align: center;
-  color: #374151;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .layout-input:focus {
-  outline: none;
-  border-color: #6b7280;
-  box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.1);
+  border-color: #c7cdd6;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
 }
 
-/* 颜色控制 */
 .color-control {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .color-input {
   width: 32px;
-  height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
-  background: transparent;
+  height: 22px;
+  padding: 2px;
+  border: 1px solid #d4d9e1;
+  border-radius: 8px;
+  background: #ffffff;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .color-hex {
-  font-size: 12px;
-  color: #4b5563;
-  width: 80px;
+  min-width: 72px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7b8798;
+  text-align: right;
 }
 
-/* 底部按钮 */
 .settings-footer {
-  padding: 16px;
-  border-top: 1px solid #f0f0f0;
-  background: #f8f9fa;
-  border-radius: 0 0 20px 20px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #eceef1;
+  background: #f7f7f8;
 }
 
 .apply-btn {
   width: 100%;
-  padding: 4px 0;
-  background: white;
-  color: #6b7280;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 500;
+  min-height: 32px;
+  border: 1px solid #cfd5dd;
+  border-radius: 10px;
+  background: #f1f3f5;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .apply-btn:hover {
-  color: #2d3038;
-  border: 1px solid #3e4144;
   background: #ffffff;
-  box-shadow: 0 4px 12px rgba(107, 114, 128, 0.2);
+  border-color: #c4ccd6;
 }
 
 .apply-btn:active {
-  transform: scale(0.98);
+  transform: scale(0.99);
 }
-
-.apply-btn:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(225, 234, 252, 0.3);
-}
-
-/* ✅ 只拉开 Vertical Spacing 和第一个颜色行之间的距离 */
-.color-row-first {
-  margin-top: 15px; /* 建议 4–8px，你现在这个 UI 用 6px 很合适 */
-}
-
 </style>
