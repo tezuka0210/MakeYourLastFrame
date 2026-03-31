@@ -18,17 +18,13 @@ const allModules = [
   { id: 'FrameInterpolation', name: 'FrameInterpolation', type: 'video' },
   { id: 'FLFrameToVideo', name: 'FisrtAndLastFrameControl', type: 'video' },
   { id: 'TextToAudio',name:'TextToAudio',type:'audio'},
-  { id: 'ImageInpainting',name:'ImageInpainting',type:'image'}
+  { id: 'ImageInpainting',name:'ImageInpainting',type:'image'},
+  { id: 'SegmentElement', name:'SegmentElement',type:'image'}
 ]
 
 /* 各模块参数定义 */
 export const workflowParameters = {
-  // AddText: [
-  //   { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
-  // ],
-  // AddWorkflow: [
-  //   { id: 'text', label: 'Text', type: 'textarea', defaultValue: '' },
-  // ],
+ 
   TextToAudio: [
     { id: 'text', label: 'Audio Prompt', type: 'textarea', defaultValue: '', placeholder: 'Text to be converted to audio...' },
     { id: 'audio_seed', label: 'Seed', type: 'number', defaultValue: null, placeholder: 'Random' },
@@ -138,7 +134,8 @@ export const workflowParameters = {
   FrameInterpolation: [
     { id: 'multiplier', label: 'multiplier', type: 'number', defaultValue: 2 },
     { id: 'fps', label: 'fps', type: 'number', defaultValue: 16, step: 1 }
-  ]
+  ],
+  SegmentElement: []
 }
 
 /* 主函数：useWorkflowForm */
