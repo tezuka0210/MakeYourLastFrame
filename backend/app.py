@@ -30,7 +30,7 @@ from agents.workflow_agent import workflow_selector_node
 from agents.prompt_agent import prompt_agent_node
 from agents.final_prompt_agent import final_prompt_agent_node 
 # --- 模式开关 ----
-APP_MODE = os.getenv('APP_MODE', 'server') 
+APP_MODE = os.getenv('APP_MODE', 'local') 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
