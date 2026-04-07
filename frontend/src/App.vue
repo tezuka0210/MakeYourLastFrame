@@ -3,7 +3,7 @@
     <!-- Top Title Bar -->
     <header class="title-bar">
       <div class="title-main">
-        <h1>ShotWeaver: Branching Video Storyboard Authoring</h1>
+        <h1>Make Your Final Frame: Re-Authoring Visual Assets for Iterative Keyframe Creation</h1>
       </div>
     </header>
 

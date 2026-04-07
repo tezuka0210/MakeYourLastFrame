@@ -1424,6 +1424,56 @@ function addMediaBoxResizeHandle(box, boxState) {
       return { box, grid, boxState }
     }
 
+
+  function buildWorkflowCanvasDragPayload(node, url, type, extra = {}) {
+    const safeUrl = String(url || '').trim()
+    const output = node?.assets?.output || {}
+    const input = node?.assets?.input || {}
+
+    return {
+      source: 'workflow-result',
+      nodeId: node?.id || '',
+      moduleId: node?.module_id || '',
+      displayName: node?.displayName || node?.label || node?.module_id || 'State',
+      type: type || deriveMediaKind(safeUrl),
+      url: safeUrl,
+      mediaUrl: safeUrl,
+      originalUrl: safeUrl,
+      fullUrl: safeUrl,
+      imageUrl: safeUrl,
+      thumbnailUrl: safeUrl,
+      prompt: node?.parameters?.positive_prompt || node?.parameters?.text || '',
+      output,
+      input,
+      ...extra,
+    }
+  }
+
+  function attachWorkflowMediaDrag(selection, payloadFactory) {
+    if (!selection || typeof payloadFactory !== 'function') return
+
+    selection
+      .attr('draggable', true)
+      .style('cursor', 'grab')
+      .on('dragstart', function (ev) {
+        ev.stopPropagation()
+        const payload = payloadFactory(this) || {}
+        const json = JSON.stringify(payload)
+
+        if (ev.dataTransfer) {
+          ev.dataTransfer.effectAllowed = 'copy'
+          ev.dataTransfer.setData('application/json', json)
+          ev.dataTransfer.setData('text/plain', json)
+          if (payload.mediaUrl || payload.url) {
+            ev.dataTransfer.setData('text/uri-list', payload.mediaUrl || payload.url)
+          }
+        }
+      })
+      .on('dragend', function () {
+        d3.select(this).style('cursor', 'grab')
+      })
+  }
+
   function renderThumbRow(parent, urls, options = {}) {
     const {
       emptyText = 'No media yet',
@@ -1502,6 +1552,8 @@ function addMediaBoxResizeHandle(box, boxState) {
           ev.stopPropagation()
           if (onThumbClick) onThumbClick(url, type)
         })
+
+      attachWorkflowMediaDrag(tile, () => buildWorkflowCanvasDragPayload(node, url, type))
 
       if (type === 'image') {
         tile.append('xhtml:img')
@@ -2628,6 +2680,21 @@ function renderMediaContent(container, data) {
 
           removeBtn.style.opacity = '0.95'
           removeBtn.style.pointerEvents = 'auto'
+        }
+
+        const mediaSrc = mediaEl?.getAttribute?.('src') || mediaEl?.dataset?.src || ''
+        const mediaType = mediaEl?.tagName?.toLowerCase?.() === 'video'
+          ? 'video'
+          : (mediaEl?.tagName?.toLowerCase?.() === 'img' || mediaEl?.tagName?.toLowerCase?.() === 'canvas')
+            ? 'image'
+            : 'image'
+
+        if (mediaSrc) {
+          const childSel = d3.select(child)
+          attachWorkflowMediaDrag(childSel, () => buildWorkflowCanvasDragPayload(node, mediaSrc, mediaType, {
+            source: 'workflow-segment-result',
+            segmentHostKey,
+          }))
         }
 
         child.onmouseleave = () => {
