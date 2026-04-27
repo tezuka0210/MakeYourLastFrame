@@ -31,8 +31,8 @@ export function initCanvasDrag() {
 
   const CAMERA_MIN_SCALE = 0.35;
   const CAMERA_MAX_SCALE = 3.2;
-  const MIN_SCALE = 0.6;
-  const MAX_SCALE = 4;
+  const MIN_SCALE = 0.1;
+  const MAX_SCALE = 5;
   const DRAG_THRESHOLD = 4;
 
   const SCREEN_DPR = window.devicePixelRatio || 2;

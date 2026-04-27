@@ -28,9 +28,9 @@ from agents.master_agent import master_agent_node
 from agents.knowledge_agent import knowledge_agent_node
 from agents.workflow_agent import workflow_selector_node
 from agents.prompt_agent import prompt_agent_node
-from agents.final_prompt_agent_weight import final_prompt_agent_node 
+from agents.final_prompt_agent import final_prompt_agent_node 
 # --- 模式开关 ----
-APP_MODE = os.getenv('APP_MODE', 'local') 
+APP_MODE = os.getenv('APP_MODE', 'server') 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
@@ -368,26 +368,41 @@ def process_agent_request():
         
         # 初始化 Base64 编码结果（默认 None，表示无图片）
         image_base64 = None
+        # 定义源目录和目标目录
+        source_dir = "local_assets/input"  # 查找文件的源目录
+        target_dir = "/home/zhengzy/comfyui/ComfyUI/input"  # 复制目标目录
+
+        # 确保目标目录存在
+        os.makedirs(target_dir, exist_ok=True)
+
         if image_url:  # 只有当 image_url 非空时，才解析 filename
             parsed_url = urllib.parse.urlparse(image_url)
             query_params = urllib.parse.parse_qs(parsed_url.query)
             filename = query_params.get('filename', [None])[0]  # 提取 filename 参数
-            
-            # 关键判断：filename 必须非空、非 None，且文件存在
+
+            # 关键判断：filename 必须非空、非 None，且是字符串
             if filename and isinstance(filename, str):
-                local_dir = "/home/zhengzy/comfyui/comfyui/input"
-                local_path = os.path.join(local_dir, filename)  # 此时 filename 是字符串，不会报错
-                
-                # 额外判断文件是否存在，避免 FileNotFoundError
-                if os.path.exists(local_path):
-                    image_base64 = encode_image_to_base64(local_path)
+                source_path = os.path.join(source_dir, filename)  # 源文件路径
+                target_path = os.path.join(target_dir, filename)  # 目标文件路径
+
+                # 第一步：判断源文件是否存在，存在则复制
+                if os.path.exists(source_path):
+                    try:
+                        # 复制文件到目标目录
+                        shutil.copy2(source_path, target_path)
+                        print(f"文件复制成功：{source_path} -> {target_path}")
+                    except Exception as e:
+                        print(f"文件复制失败：{str(e)}")
+
+                # 第二步：判断目标目录文件是否存在，执行原有逻辑
+                if os.path.exists(target_path):
+                    image_base64 = encode_image_to_base64(target_path)
                 else:
-                    print(f"警告：图片文件不存在 -> {local_path}")
+                    print(f"警告：图片文件不存在 -> {target_path}")
             else:
                 print("警告：未从 image_url 中提取到有效的 filename")
         else:
             print("提示：未传入 image_url，跳过图片处理")
-            
         # 2. 准备agent所需的状态
         mock_state = {
             "global_context":global_context,

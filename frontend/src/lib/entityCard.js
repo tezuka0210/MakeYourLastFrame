@@ -69,10 +69,12 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
             position: relative;
             max-width: 90%;
             max-height: 90%;
+            min-width: 1px;
+            min-height: 1px;
             display: flex;
             flex-direction: column;
             align-items: center;
-        `;
+        `; 
 
         // 关闭按钮
         const closeBtn = document.createElement('button');
@@ -97,9 +99,11 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
 
         // 高清图片容器
         const previewImg = document.createElement('img');
-        previewImg.style.cssText = `
+       previewImg.style.cssText = `
             max-width: 100%;
             max-height: 80vh;
+            min-width: 1px;
+            min-height: 1px;
             border-radius: 8px;
             margin-bottom: 20px;
         `;

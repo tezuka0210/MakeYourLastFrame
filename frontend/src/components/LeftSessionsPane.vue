@@ -56,8 +56,9 @@ interface Session {
 
 const sessions = ref<Session[]>([
   { id: 1, title: 'New Session' },
-  { id: 2, title: 'Guqin' },
-  { id: 3, title: 'Three colored camel figurines carrying music' }
+  { id: 2, title: 'Stage play' },
+  { id: 3, title: 'On the moon' },
+  { id: 4, title: 'A leisurely afternoon' }
 ])
 
 const currentSessionId = ref<number>(1)
