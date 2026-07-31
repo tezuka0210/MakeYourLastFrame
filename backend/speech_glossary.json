@@ -1,9 +1,9 @@
 {
   "_readme": {
     "purpose": "语音输入热词表：hotwords 用于生成识别提示，同时驱动识别后的确定性纠错。",
-    "aliases": "只写真实听错的写法（同音字、字母拆读、拼写变体）。别名会被强制改写成 term，因此合法中文词（如“蒙版”“深度图”）严禁作为英文词的 alias，否则会污染提示词正文。",
+    "aliases": "面向中英混说场景：只写“说英文术语时被听歪”的写法——中文音译（康戳奈特→ControlNet）、中英混排（K采样器→KSampler）、字母拆读（S A M 3→SAM3）、英文近音拼写（Comfy AI→ComfyUI）、数字读法（Wan 二点二→Wan2.2）。别名会被强制改写成 term，所以两类词严禁写进来：① 合法中文词（蒙版、深度图、姿态控制）；② 本身是常用词的近音（看你、Candy、Kenny、马斯克、劳拉、克莱因）。译名式别名（控制网、控图网）没人这么说，属于无效条目。",
     "case": "英文匹配不区分大小写，CamelCase 的空格变体由后端自动生成，不必手写（如 ComfyUI 自带 Comfy UI）。",
-    "priority": "按优先级降序注入识别提示，受 SPEECH_GLOSSARY_MAX_PROMPT_TERMS(80) 与 MAX_PROMPT_CHARS(1600) 截断，当前中文提示下实测前 47 条进入提示；其余条目仍参与识别后的纠错替换。新增高优先级词会挤掉尾部词条。",
+    "priority": "按优先级降序注入识别提示，受 SPEECH_GLOSSARY_MAX_PROMPT_TERMS(80) 与 MAX_PROMPT_CHARS(1600) 截断，当前中文提示下实测仅前 37 条进入提示（别名越丰富，能塞进去的词条越少）；其余条目仍参与识别后的纠错替换。想让更多词进提示，调大环境变量 SPEECH_GLOSSARY_MAX_PROMPT_CHARS（默认 1600）。",
     "scope": "语音按钮只出现在 textarea（正向/负向提示词、音频文本），所以词表以“说得出来的创作内容”为主。"
   },
   "hotwords": [
@@ -11,9 +11,12 @@
       "term": "ComfyUI",
       "aliases": [
         "康菲UI",
+        "Comfy AI",
         "康飞UI",
         "坎菲UI",
-        "空飞UI"
+        "空飞UI",
+        "Confy UI",
+        "康菲油爱"
       ],
       "category": "软件",
       "note": "保持英文大小写，不翻译",
@@ -23,9 +26,12 @@
       "term": "SAM3",
       "aliases": [
         "SAM 3",
+        "山姆3",
+        "Sam three",
         "S A M 3",
         "SAM三",
-        "赛姆3"
+        "赛姆3",
+        "三姆3"
       ],
       "category": "分割模型",
       "note": "实体分割主引擎",
@@ -34,7 +40,8 @@
     {
       "term": "Segment Anything Model",
       "aliases": [
-        "Segment Anything"
+        "Segment Anything",
+        "Segment Everything"
       ],
       "category": "分割模型",
       "priority": 88
@@ -43,8 +50,12 @@
       "term": "FLUX.2",
       "aliases": [
         "FLUX 2",
-        "Flux二",
-        "福克斯2"
+        "Flux two",
+        "Flux 二",
+        "弗拉克斯2",
+        "Flux point two",
+        "福克斯2",
+        "Flux二"
       ],
       "category": "图像模型",
       "note": "本项目主力图像底模",
@@ -54,7 +65,8 @@
       "term": "Klein",
       "aliases": [
         "klein base",
-        "flux-2-klein"
+        "flux-2-klein",
+        "Klein 基座"
       ],
       "category": "图像模型",
       "note": "指 flux-2-klein 基座",
@@ -64,7 +76,9 @@
       "term": "Flux Fill",
       "aliases": [
         "flux1-fill",
-        "flux fill dev"
+        "flux fill dev",
+        "flux one fill",
+        "Flux 菲尔"
       ],
       "category": "图像模型",
       "note": "局部重绘专用",
@@ -77,7 +91,10 @@
         "万2.2",
         "湾2.2",
         "完2.2",
-        "万相2.2"
+        "Wan two point two",
+        "万相2.2",
+        "王2.2",
+        "Wan 二点二"
       ],
       "category": "视频模型",
       "note": "本项目主力视频底模",
@@ -89,7 +106,10 @@
         "Wan 2.1",
         "万2.1",
         "湾2.1",
-        "万相2.1"
+        "完2.1",
+        "Wan two point one",
+        "万相2.1",
+        "Wan 二点一"
       ],
       "category": "视频模型",
       "priority": 94
@@ -99,7 +119,9 @@
       "aliases": [
         "Z Image Turbo",
         "z_image_turbo",
-        "Z图像 Turbo"
+        "Z图像 Turbo",
+        "Z Image 特波",
+        "贼 Image Turbo"
       ],
       "category": "图像模型",
       "priority": 93
@@ -108,7 +130,9 @@
       "term": "Qwen-Image",
       "aliases": [
         "Qwen Image",
-        "千问图像"
+        "千问图像",
+        "通义图像",
+        "Q问 Image"
       ],
       "category": "图像模型",
       "priority": 86
@@ -116,7 +140,9 @@
     {
       "term": "Fun Camera",
       "aliases": [
-        "fun camera 模块"
+        "funcamera",
+        "fun camera 模块",
+        "方 Camera"
       ],
       "category": "视频模块",
       "note": "Wan2.2 运镜控制分支",
@@ -124,6 +150,10 @@
     },
     {
       "term": "Fun Control",
+      "aliases": [
+        "funcontrol",
+        "Fun 控制"
+      ],
       "category": "视频模块",
       "note": "Wan2.2 结构控制分支",
       "priority": 85
@@ -132,7 +162,9 @@
       "term": "MakeYourLastFrame",
       "aliases": [
         "MYLF",
-        "Make Your Last Frame"
+        "Make Your Last Frame",
+        "Make You Last Frame",
+        "M Y L F"
       ],
       "category": "系统",
       "priority": 84
@@ -141,7 +173,8 @@
       "term": "T2VTree",
       "aliases": [
         "T2V Tree",
-        "T 2 V Tree"
+        "T 2 V Tree",
+        "T2V 树"
       ],
       "category": "系统",
       "note": "节点化创作路径",
@@ -151,6 +184,50 @@
       "term": "ComfyUI API",
       "category": "接口",
       "priority": 70
+    },
+    {
+      "term": "i2v",
+      "aliases": [
+        "I 2 V",
+        "i two v",
+        "爱吐V"
+      ],
+      "category": "缩写",
+      "priority": 78
+    },
+    {
+      "term": "t2v",
+      "aliases": [
+        "T 2 V",
+        "t two v"
+      ],
+      "category": "缩写",
+      "priority": 78
+    },
+    {
+      "term": "t2i",
+      "aliases": [
+        "T 2 I"
+      ],
+      "category": "缩写",
+      "priority": 70
+    },
+    {
+      "term": "i2i",
+      "aliases": [
+        "I 2 I"
+      ],
+      "category": "缩写",
+      "priority": 70
+    },
+    {
+      "term": "14B",
+      "aliases": [
+        "14 B",
+        "十四B"
+      ],
+      "category": "规格",
+      "priority": 66
     },
     {
       "term": "提示词",
@@ -509,6 +586,11 @@
     {
       "term": "ControlNet",
       "aliases": [
+        "康戳奈特",
+        "Control Nat",
+        "控制奈特",
+        "Control Network",
+        "康抽奈特",
         "控图网"
       ],
       "category": "控制模型",
@@ -518,9 +600,12 @@
       "term": "Canny",
       "aliases": [
         "坎尼",
-        "堪尼"
+        "卡尼",
+        "堪尼",
+        "Kani"
       ],
       "category": "边缘检测",
+      "note": "不收“看你/Candy/Kenny”，会误伤正常语句",
       "priority": 86
     },
     {
@@ -536,7 +621,9 @@
     {
       "term": "IPAdapter",
       "aliases": [
-        "IP 适配器"
+        "IP 适配器",
+        "爱皮 adapter",
+        "IPA adapter"
       ],
       "category": "参考控制",
       "priority": 83
@@ -549,20 +636,27 @@
     {
       "term": "OpenPose",
       "aliases": [
-        "欧朋 Pose"
+        "欧朋 Pose",
+        "欧盆 Pose",
+        "Open 破死"
       ],
       "category": "姿态控制",
       "priority": 82
     },
     {
       "term": "DWPose",
+      "aliases": [
+        "D W Pose"
+      ],
       "category": "姿态控制",
       "priority": 74
     },
     {
       "term": "Depth Anything",
       "aliases": [
-        "DepthAnything"
+        "DepthAnything",
+        "Depth Any Thing",
+        "呆普斯 Anything"
       ],
       "category": "深度估计",
       "priority": 80
@@ -570,7 +664,8 @@
     {
       "term": "GroundingDINO",
       "aliases": [
-        "Grounding 蒂诺"
+        "Grounding 蒂诺",
+        "格朗丁 Dino"
       ],
       "category": "目标检测",
       "priority": 76
@@ -579,7 +674,9 @@
       "term": "rembg",
       "aliases": [
         "rem bg",
-        "让 bg"
+        "软 bg",
+        "让 bg",
+        "rem B G"
       ],
       "category": "抠图后端",
       "priority": 79
@@ -588,7 +685,9 @@
       "term": "u2net",
       "aliases": [
         "U2 net",
-        "U 二 net"
+        "U 二 net",
+        "优兔 net",
+        "you two net"
       ],
       "category": "抠图模型",
       "priority": 78
@@ -624,13 +723,19 @@
     },
     {
       "term": "RIFE",
+      "aliases": [
+        "瑞夫",
+        "拉伊夫"
+      ],
       "category": "补帧模型",
       "priority": 78
     },
     {
       "term": "Real-ESRGAN",
       "aliases": [
-        "Real ESRGAN"
+        "Real ESRGAN",
+        "Real E S R GAN",
+        "real esr 甘"
       ],
       "category": "超分模型",
       "priority": 76
@@ -655,19 +760,29 @@
     },
     {
       "term": "KSampler",
+      "aliases": [
+        "K 采样器",
+        "凯 Sampler",
+        "K Sampler 节点"
+      ],
       "category": "节点",
       "priority": 80
     },
     {
       "term": "VAE",
       "aliases": [
-        "V A E"
+        "V A E",
+        "微诶伊"
       ],
       "category": "节点",
       "priority": 78
     },
     {
       "term": "CLIP",
+      "aliases": [
+        "克利普",
+        "C L I P"
+      ],
       "category": "节点",
       "priority": 78
     },
@@ -709,6 +824,7 @@
       "term": "safetensors",
       "aliases": [
         "safe tensors",
+        "safetensor",
         "赛夫 tensors"
       ],
       "category": "权重格式",
@@ -744,13 +860,19 @@
     {
       "term": "CFG Scale",
       "aliases": [
-        "CFG"
+        "CFG",
+        "C F G",
+        "西唉夫吉"
       ],
       "category": "参数",
       "priority": 66
     },
     {
       "term": "Denoise",
+      "aliases": [
+        "迪诺伊斯",
+        "低 noise"
+      ],
       "category": "参数",
       "priority": 68
     },
@@ -761,6 +883,9 @@
     },
     {
       "term": "Sampler",
+      "aliases": [
+        "桑普勒"
+      ],
       "category": "参数",
       "priority": 64
     },
@@ -1445,7 +1570,8 @@
     {
       "term": "Whisper",
       "aliases": [
-        "威斯珀"
+        "威斯珀",
+        "维斯珀"
       ],
       "category": "语音识别",
       "priority": 72
