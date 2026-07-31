@@ -8,6 +8,7 @@ import websocket # 用于与ComfyUI进行实时通信
 import shutil
 import mimetypes
 import re
+import tempfile
 from flask import Flask, request, jsonify, send_from_directory, render_template, send_file, abort, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ import sys
 import base64
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
+from http import HTTPStatus
 # 将agents文件夹添加到Python路径（确保能导入）
 sys.path.append(str(Path(__file__).parent / "agents"))
 from agents.utils import get_all_workflow_names
@@ -30,7 +32,7 @@ from agents.workflow_agent import workflow_selector_node
 from agents.prompt_agent import prompt_agent_node
 from agents.final_prompt_agent import final_prompt_agent_node 
 # --- 模式开关 ----
-APP_MODE = os.getenv('APP_MODE', 'server') 
+APP_MODE = os.getenv('APP_MODE', 'local')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
@@ -258,6 +260,106 @@ def get_input_image_count_from_db(node_id: str) -> int:
         print(f"计算节点 {node_id} 的 input.images 数量时出错: {str(e)}")
         return 0
 
+def make_input_asset_url(filename: str) -> str:
+    return f"/view?filename={urllib.parse.quote_plus(filename)}&subfolder=&type=input"
+
+def get_asset_bucket(filename: str, content_type: str = "") -> str:
+    mime = (content_type or mimetypes.guess_type(filename or "")[0] or "").lower()
+    ext = os.path.splitext(filename or "")[1].lower()
+    if mime.startswith("video/") or ext in {".mp4", ".mov", ".avi", ".webm", ".mkv"}:
+        return "videos"
+    if mime.startswith("audio/") or ext in {".mp3", ".wav", ".flac", ".m4a", ".ogg"}:
+        return "audio"
+    return "images"
+
+def resolve_asset_file_path(asset_url: str) -> tuple[str | None, str | None, str | None]:
+    parsed_url = urllib.parse.urlparse(asset_url or "")
+    query_params = urllib.parse.parse_qs(parsed_url.query)
+    filename = query_params.get("filename", [None])[0]
+    if not filename:
+        return None, None, None
+
+    filename = urllib.parse.unquote_plus(filename)
+    subfolder = urllib.parse.unquote_plus(query_params.get("subfolder", [""])[0] or "")
+    file_type = query_params.get("type", ["output"])[0] or "output"
+
+    if file_type == "input":
+        return filename, file_type, os.path.join(COMFYUI_INPUT_PATH, filename)
+
+    candidates = [
+        os.path.join(COMFYUI_OUTPUT_PATH, subfolder, filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, "video", filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, "audio", filename),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return filename, file_type, candidate
+
+    return filename, file_type, candidates[0]
+
+def ensure_asset_in_comfyui_input(asset_url: str) -> str:
+    filename, file_type, source_path = resolve_asset_file_path(asset_url)
+    if not filename:
+        return asset_url
+
+    target_path = os.path.join(COMFYUI_INPUT_PATH, filename)
+    os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
+
+    if file_type == "input":
+        if not os.path.exists(target_path):
+            raise FileNotFoundError(f"Input asset not found: {target_path}")
+        return make_input_asset_url(filename)
+
+    if not source_path or not os.path.exists(source_path):
+        raise FileNotFoundError(f"Source asset not found for input copy: {asset_url}")
+
+    if os.path.abspath(source_path) != os.path.abspath(target_path):
+        shutil.copy2(source_path, target_path)
+        print(f"Copied asset into ComfyUI input: {source_path} -> {target_path}")
+
+    return make_input_asset_url(filename)
+
+def normalize_input_assets_for_comfyui(input_assets: dict | None) -> dict:
+    if not isinstance(input_assets, dict):
+        return {}
+
+    normalized = {}
+    for media_key in ("images", "videos", "audio"):
+        urls = input_assets.get(media_key, [])
+        if not isinstance(urls, list):
+            urls = []
+        normalized[media_key] = [
+            ensure_asset_in_comfyui_input(url)
+            for url in urls
+            if isinstance(url, str) and url.strip()
+        ]
+
+    return normalized
+
+def sync_request_input_assets(node_id: str, input_assets: dict | None) -> dict:
+    target_node = database.get_node(node_id)
+    if (not isinstance(input_assets, dict) or not any(input_assets.get(key) for key in ("images", "videos", "audio"))) and target_node:
+        input_assets = (target_node.get("assets", {}) or {}).get("input", {})
+
+    normalized_input = normalize_input_assets_for_comfyui(input_assets)
+    if not any(normalized_input.values()):
+        return normalized_input
+
+    if not target_node:
+        return normalized_input
+
+    updated_assets = target_node.get("assets", {}) or {}
+    updated_assets["input"] = normalized_input
+    database.update_node(
+        node_id=node_id,
+        payload={
+            "assets": updated_assets,
+            "parameters": target_node.get("parameters", {})
+        }
+    )
+    return normalized_input
+
 def encode_image_to_base64(path):
     mime, _ = mimetypes.guess_type(path)
     if not mime:
@@ -268,11 +370,348 @@ def encode_image_to_base64(path):
 
     return f"data:{mime};base64,{encoded}"
 
+def resolve_chat_completions_url(base_url: str) -> str:
+    url = (base_url or "").strip().rstrip("/")
+    if not url:
+        return "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    if url.endswith("/chat/completions"):
+        return url
+    return f"{url}/chat/completions"
+
+SPEECH_POLISH_MODEL = os.getenv("SPEECH_POLISH_MODEL") or os.getenv("OPENAI_MODEL", "qwen-plus")
+SPEECH_POLISH_BASE_URL = resolve_chat_completions_url(
+    os.getenv("SPEECH_POLISH_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+)
+SPEECH_POLISH_MAX_CHARS = 800
+SPEECH_TRANSCRIBE_MODEL = os.getenv("SPEECH_TRANSCRIBE_MODEL", "whisper-1")
+SPEECH_TRANSCRIBE_BASE_URL = os.getenv("SPEECH_TRANSCRIBE_BASE_URL", "")
+SPEECH_TRANSCRIBE_AUTH_SCHEME = os.getenv("SPEECH_TRANSCRIBE_AUTH_SCHEME", "bearer").strip().lower()
+LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
+LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "cpu")
+LOCAL_WHISPER_COMPUTE_TYPE = os.getenv("LOCAL_WHISPER_COMPUTE_TYPE", "int8")
+LOCAL_WHISPER_INITIAL_PROMPT = os.getenv("LOCAL_WHISPER_INITIAL_PROMPT", "以下是普通话语音转写，请输出简体中文。")
+LOCAL_WHISPER_TO_SIMPLIFIED = os.getenv("LOCAL_WHISPER_TO_SIMPLIFIED", "true").strip().lower() == "true"
+SPEECH_GLOSSARY_PATH = os.getenv(
+    "SPEECH_GLOSSARY_PATH",
+    os.path.join(BASE_DIR, "speech_glossary.json")
+)
+SPEECH_GLOSSARY_MAX_PROMPT_TERMS = int(os.getenv("SPEECH_GLOSSARY_MAX_PROMPT_TERMS", "80"))
+_local_whisper_model = None
+_opencc_converter = None
+
+def resolve_transcriptions_url(base_url: str) -> str:
+    url = (base_url or "").strip().rstrip("/")
+    if not url:
+        return "https://api.openai.com/v1/audio/transcriptions"
+    if url.endswith("/audio/transcriptions"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/audio/transcriptions"
+    return f"{url}/v1/audio/transcriptions"
+
+def resolve_openai_client_base_url(base_url: str) -> str | None:
+    url = (base_url or "").strip().rstrip("/")
+    if not url:
+        return None
+    if url.endswith("/audio/transcriptions"):
+        url = url[: -len("/audio/transcriptions")].rstrip("/")
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
+
+def normalize_transcription_language(language: str) -> str:
+    lang = (language or "").strip()
+    if not lang:
+        return ""
+    return lang.split("-", 1)[0].lower()
+
+def build_transcription_auth_header(api_key: str) -> str:
+    key = (api_key or "").strip()
+    if not key:
+        return ""
+    if key.lower().startswith("bearer "):
+        return key
+    transcribe_base_url = (SPEECH_TRANSCRIBE_BASE_URL or "").lower()
+    if SPEECH_TRANSCRIBE_AUTH_SCHEME in ("raw", "token", "none") or "dmxapi" in transcribe_base_url:
+        return key
+    return f"Bearer {key}"
+
+def get_local_whisper_model():
+    global _local_whisper_model
+    if _local_whisper_model is None:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local Whisper is not installed. Run: pip install faster-whisper"
+            ) from exc
+
+        _local_whisper_model = WhisperModel(
+            LOCAL_WHISPER_MODEL,
+            device=LOCAL_WHISPER_DEVICE,
+            compute_type=LOCAL_WHISPER_COMPUTE_TYPE
+        )
+    return _local_whisper_model
+
+def convert_to_simplified_chinese(text: str) -> str:
+    if not LOCAL_WHISPER_TO_SIMPLIFIED or not text:
+        return text
+
+    global _opencc_converter
+    try:
+        if _opencc_converter is None:
+            from opencc import OpenCC
+            _opencc_converter = OpenCC("t2s")
+        return _opencc_converter.convert(text)
+    except ImportError:
+        print("opencc is not installed; skipping traditional-to-simplified conversion.")
+        return text
+
+def load_speech_glossary() -> dict:
+    if not SPEECH_GLOSSARY_PATH or not os.path.exists(SPEECH_GLOSSARY_PATH):
+        return {"terms": [], "corrections": {}}
+
+    try:
+        with open(SPEECH_GLOSSARY_PATH, "r", encoding="utf-8") as f:
+            glossary = json.load(f)
+    except Exception as exc:
+        print(f"Failed to load speech glossary: {exc}")
+        return {"terms": [], "corrections": {}}
+
+    terms = glossary.get("terms", [])
+    corrections = glossary.get("corrections", {})
+    if not isinstance(terms, list):
+        terms = []
+    if not isinstance(corrections, dict):
+        corrections = {}
+
+    clean_terms = [str(term).strip() for term in terms if str(term).strip()]
+    clean_corrections = {
+        str(wrong).strip(): str(correct).strip()
+        for wrong, correct in corrections.items()
+        if str(wrong).strip() and str(correct).strip()
+    }
+    return {"terms": clean_terms, "corrections": clean_corrections}
+
+def build_local_whisper_prompt() -> str:
+    glossary = load_speech_glossary()
+    terms = glossary["terms"][:SPEECH_GLOSSARY_MAX_PROMPT_TERMS]
+    if not terms:
+        return LOCAL_WHISPER_INITIAL_PROMPT
+
+    terms_text = "、".join(terms)
+    return f"{LOCAL_WHISPER_INITIAL_PROMPT}\n可能出现的专有名词包括：{terms_text}。"
+
+def apply_speech_glossary(text: str) -> str:
+    if not text:
+        return text
+
+    corrections = load_speech_glossary()["corrections"]
+    corrected = text
+    for wrong, correct in sorted(corrections.items(), key=lambda item: len(item[0]), reverse=True):
+        corrected = corrected.replace(wrong, correct)
+    return corrected
+
+def ms_between(start: float, end: float) -> float:
+    return round((end - start) * 1000, 2)
+
+def transcribe_with_local_whisper(audio_file, language: str, request_received_at: float | None = None) -> tuple[str, dict]:
+    request_start = request_received_at or time.perf_counter()
+    suffix = Path(audio_file.filename or "speech.webm").suffix or ".webm"
+    temp_path = None
+    audio_processing_start = time.perf_counter()
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_audio:
+            audio_file.save(temp_audio)
+            temp_path = temp_audio.name
+        audio_processing_end = time.perf_counter()
+
+        # Keep model loading outside per-request inference timing.
+        model_load_start = time.perf_counter()
+        model = get_local_whisper_model()
+        model_load_end = time.perf_counter()
+        whisper_start = time.perf_counter()
+        segments, _ = model.transcribe(
+            temp_path,
+            language=language or "zh",
+            task="transcribe",
+            initial_prompt=build_local_whisper_prompt(),
+            vad_filter=True
+        )
+        segment_texts = [segment.text for segment in segments]
+        whisper_end = time.perf_counter()
+
+        result_processing_start = time.perf_counter()
+        text = "".join(segment_texts).strip()
+        text = convert_to_simplified_chinese(text)
+        text = apply_speech_glossary(text)
+        result_processing_end = time.perf_counter()
+        response_ready_at = time.perf_counter()
+
+        timing = {
+            "audioDurationMs": None,
+            "audioProcessingTimeMs": ms_between(audio_processing_start, audio_processing_end),
+            "modelLoadTimeMs": ms_between(model_load_start, model_load_end),
+            "whisperInferenceTimeMs": ms_between(whisper_start, whisper_end),
+            "resultProcessingTimeMs": ms_between(result_processing_start, result_processing_end),
+            "backendTotalTimeMs": ms_between(request_start, response_ready_at)
+        }
+        return text, timing
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+def transcribe_with_openai_api(audio_file, language: str, request_received_at: float | None = None) -> tuple[str, dict]:
+    request_start = request_received_at or time.perf_counter()
+    api_key = os.getenv("SPEECH_TRANSCRIBE_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("SPEECH_TRANSCRIBE_API_KEY or OPENAI_API_KEY is not configured")
+
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("openai is not installed. Run: pip install openai") from exc
+
+    suffix = Path(audio_file.filename or "speech.webm").suffix or ".webm"
+    temp_path = None
+    audio_processing_start = time.perf_counter()
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_audio:
+            audio_file.save(temp_audio)
+            temp_path = temp_audio.name
+        audio_processing_end = time.perf_counter()
+
+        client_kwargs = {"api_key": api_key}
+        client_base_url = resolve_openai_client_base_url(SPEECH_TRANSCRIBE_BASE_URL)
+        if client_base_url:
+            client_kwargs["base_url"] = client_base_url
+        client = OpenAI(**client_kwargs)
+
+        transcribe_kwargs = {
+            "model": SPEECH_TRANSCRIBE_MODEL,
+            "response_format": "text",
+        }
+        if language:
+            transcribe_kwargs["language"] = language
+
+        whisper_start = time.perf_counter()
+        with open(temp_path, "rb") as audio:
+            transcript = client.audio.transcriptions.create(
+                file=audio,
+                **transcribe_kwargs
+            )
+        whisper_end = time.perf_counter()
+
+        result_processing_start = time.perf_counter()
+        text = apply_speech_glossary(str(transcript or "").strip())
+        result_processing_end = time.perf_counter()
+        response_ready_at = time.perf_counter()
+
+        timing = {
+            "audioDurationMs": None,
+            "audioProcessingTimeMs": ms_between(audio_processing_start, audio_processing_end),
+            "modelLoadTimeMs": None,
+            "whisperInferenceTimeMs": ms_between(whisper_start, whisper_end),
+            "resultProcessingTimeMs": ms_between(result_processing_start, result_processing_end),
+            "backendTotalTimeMs": ms_between(request_start, response_ready_at)
+        }
+        return text, timing
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+SPEECH_POLISH_SYSTEM_PROMPT = """
+你是语音输入文本整理器。只修正明显识别错误、补充标点、删除重复口癖，让文本更通顺。
+必须保留原意，不添加新角色、新物体、新风格，不扩写成正式生成提示词，不翻译。
+只输出整理后的文本，不要解释。
+""".strip()
+
+def polish_speech_text_with_qwen(raw_text: str) -> str:
+    text = (raw_text or "").strip()
+    if not text:
+        return ""
+    if len(text) > SPEECH_POLISH_MAX_CHARS:
+        text = text[:SPEECH_POLISH_MAX_CHARS]
+
+    api_key = os.getenv("SPEECH_POLISH_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        raise RuntimeError("SPEECH_POLISH_API_KEY or OPENAI_API_KEY is not configured")
+
+    response = requests.post(
+        SPEECH_POLISH_BASE_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": SPEECH_POLISH_MODEL,
+            "messages": [
+                {"role": "system", "content": SPEECH_POLISH_SYSTEM_PROMPT},
+                {"role": "user", "content": text}
+            ],
+            "temperature": 0.2
+        },
+        timeout=20
+    )
+
+    if response.status_code != HTTPStatus.OK:
+        raise RuntimeError(f"DashScope error: {response.status_code} {response.text}")
+
+    result = response.json()
+    polished = result["choices"][0]["message"]["content"].strip()
+    return polished or text
+
 
 # --- 3. Flask API 路由定义 ---
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/api/speech/transcribe', methods=['POST'])
+def transcribe_speech_audio():
+    request_received_at = time.perf_counter()
+    audio_file = request.files.get('audio')
+    if not audio_file:
+        return jsonify({"error": "Missing audio file"}), 400
+
+    language = normalize_transcription_language(request.form.get('language', ''))
+
+    try:
+        text, timing = transcribe_with_openai_api(audio_file, language, request_received_at)
+        return jsonify({
+            "text": text,
+            "model": SPEECH_TRANSCRIBE_MODEL,
+            "provider": "api",
+            "timing": timing
+        }), 200
+    except Exception as e:
+        print(f"Speech transcription failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/speech/polish', methods=['POST'])
+def polish_speech_text():
+    data = request.get_json(silent=True) or {}
+    raw_text = (data.get('text') or '').strip()
+
+    if not raw_text:
+        return jsonify({"raw_text": "", "polished_text": ""}), 200
+
+    try:
+        polished_text = polish_speech_text_with_qwen(raw_text)
+        return jsonify({
+            "raw_text": raw_text,
+            "polished_text": polished_text,
+            "model": SPEECH_POLISH_MODEL
+        }), 200
+    except Exception as e:
+        print(f"Speech polish failed: {e}")
+        return jsonify({
+            "raw_text": raw_text,
+            "polished_text": raw_text,
+            "error": str(e)
+        }), 200
 
 @app.route("/view", methods=["GET"])
 def view_file():
@@ -511,7 +950,7 @@ def upload_asset():
 
     try:
         # 3. 批量保存文件到 ComfyUI input 目录
-        asset_urls = []  # 存储 (URL, 扩展名)
+        asset_urls = []
         for file in files:
             _, ext = os.path.splitext(file.filename)
             filename = f"{uuid.uuid4()}{ext}"  # 唯一文件名
@@ -521,7 +960,7 @@ def upload_asset():
 
             # 4. 构建文件访问URL
             asset_url = f"/view?filename={urllib.parse.quote_plus(filename)}&subfolder=&type=input"
-            asset_urls.append((asset_url, ext.lower()))
+            asset_urls.append((asset_url, get_asset_bucket(filename, file.mimetype)))
 
         # 5. 获取目标节点
         target_node = database.get_node(target_node_id)
@@ -533,8 +972,8 @@ def upload_asset():
         updated_assets['input'] = updated_assets.get('input', {})  # 初始化input
 
         # 按文件类型分类添加
-        for asset_url, ext in asset_urls:
-            updated_assets['input']['images'] = updated_assets['input'].get('images', []) + [asset_url]
+        for asset_url, bucket in asset_urls:
+            updated_assets['input'][bucket] = updated_assets['input'].get(bucket, []) + [asset_url]
 
         print(updated_assets)
         # 7. 更新数据库
@@ -821,6 +1260,7 @@ def create_node():
     parent_ids = data.get('parent_ids', [])
     module_id_from_frontend = data.get('module_id')
     parameters = data.get('parameters', {})
+    normalized_request_input_assets = sync_request_input_assets(node_id, data.get('input_assets'))
 
     # 工具函数
     def is_parameters_empty(params):
@@ -1163,7 +1603,7 @@ def create_node():
 
     # 主流程保存节点
     if outputs:
-        node_assets = {"input": data.get('input_assets', {}), "output": outputs}
+        node_assets = {"input": normalized_request_input_assets, "output": outputs}
         database.update_node(
             node_id=node_id,
             payload={

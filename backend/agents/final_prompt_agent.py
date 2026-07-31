@@ -1,7 +1,7 @@
 import json
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .llm_config import create_chat_llm
 
 def final_prompt_agent_node(state: AgentState):
     print("--- Running Prompt Agent (Plain Text Mode) ---")
@@ -23,8 +23,8 @@ def final_prompt_agent_node(state: AgentState):
     # =========================================================================
 
     # 2. 初始化 LLM
-    llm = ChatOpenAI(
-        model="gpt-4o",
+    llm = create_chat_llm(
+        default_model="gpt-4o",
         temperature=0.3, 
         model_kwargs={"response_format": {"type": "json_object"}}
     )

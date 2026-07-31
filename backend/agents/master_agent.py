@@ -1,7 +1,7 @@
 import json
 from langchain_core.messages import HumanMessage,SystemMessage
-from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .llm_config import create_chat_llm
 
 def master_agent_node(state: AgentState):
     print("--- Running Master Agent ---")
@@ -10,8 +10,9 @@ def master_agent_node(state: AgentState):
     print(state.get("user_input",None))
 
     # 1. Initialize LLM (GPT-4o is required for Image Vision)
-    llm = ChatOpenAI(
-        model="gpt-4o",
+    llm = create_chat_llm(
+        default_model="gpt-4o",
+        env_name="OPENAI_VISION_MODEL",
         temperature=0,
         model_kwargs={"response_format":{"type": "json_object"}}
     )

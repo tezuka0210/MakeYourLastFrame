@@ -2,13 +2,14 @@ import json
 import os
 import base64
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from .llm_config import create_chat_llm
 
 class EntityAgent:
     def __init__(self):
         # 初始化 GPT-4o 视觉模型
-        self.llm = ChatOpenAI(
-            model="gpt-4o",
+        self.llm = create_chat_llm(
+            default_model="gpt-4o",
+            env_name="OPENAI_VISION_MODEL",
             temperature=0,
             model_kwargs={"response_format": {"type": "json_object"}}
         )

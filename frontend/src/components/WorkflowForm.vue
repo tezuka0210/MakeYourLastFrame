@@ -93,14 +93,32 @@
         class="w-full bg-white border border-gray-300 rounded-md p-2"
       />
 
-      <textarea
-        v-else-if="param.type === 'textarea'"
-        :id="param.id"
-        rows="4"
-        v-model="parameterValues[param.id]"
-        :placeholder="param.placeholder"
-        class="w-full bg-white border border-gray-300 rounded-md p-2"
-      ></textarea>
+      <div v-else-if="param.type === 'textarea'" class="relative">
+        <textarea
+          :id="param.id"
+          rows="4"
+          v-model="parameterValues[param.id]"
+          :placeholder="param.placeholder"
+          class="w-full bg-white border border-gray-300 rounded-md p-2 pr-24"
+        ></textarea>
+        <button
+          type="button"
+          class="absolute top-2 right-14 h-7 min-w-7 rounded-full border border-gray-300 bg-white px-2 text-xs text-gray-600 hover:bg-gray-50"
+          title="导出语音测试数据"
+          @click="exportSpeechTimingRecordsCsv"
+        >
+          CSV
+        </button>
+        <button
+          type="button"
+          class="absolute top-2 right-2 h-7 min-w-7 rounded-full border border-gray-300 bg-white px-2 text-xs text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          :title="speechButtonTitle(param.id)"
+          :disabled="!speechSupported || polishingParamId === param.id"
+          @click="toggleSpeechInput(param.id)"
+        >
+          {{ speechButtonText(param.id) }}
+        </button>
+      </div>
 
       <select
         v-else-if="param.type === 'select'"
@@ -153,8 +171,9 @@
 
 <script setup>
 
-import { ref, toRefs, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { useWorkflowForm } from '@/lib/useWorkflowForm.js'
+import { exportSpeechTimingRecordsCsv, isSpeechInputSupported, startBrowserSpeechInput } from '@/lib/speechInput.js'
 
 const props = defineProps({
   selectedIds: { type: Array, default: () => [] },
@@ -172,6 +191,66 @@ const {
   availableModules,
   currentParameters
 } = useWorkflowForm(props)
+
+const speechSupported = isSpeechInputSupported()
+const listeningParamId = ref('')
+const polishingParamId = ref('')
+let activeSpeechSession = null
+
+function stopSpeechInput () {
+  if (activeSpeechSession) {
+    activeSpeechSession.stop()
+    activeSpeechSession = null
+  }
+  listeningParamId.value = ''
+}
+
+function toggleSpeechInput (paramId) {
+  if (!speechSupported) return
+
+  if (listeningParamId.value === paramId) {
+    stopSpeechInput()
+    return
+  }
+
+  stopSpeechInput()
+
+  try {
+    activeSpeechSession = startBrowserSpeechInput({
+      getValue: () => parameterValues[paramId] || '',
+      setValue: (value) => {
+        parameterValues[paramId] = value
+      },
+      onStateChange: (isListening) => {
+        listeningParamId.value = isListening ? paramId : ''
+        if (!isListening) activeSpeechSession = null
+      },
+      onPolishingChange: (isPolishing) => {
+        polishingParamId.value = isPolishing ? paramId : ''
+      },
+      onError: (error) => {
+        console.warn('Speech input failed:', error)
+      }
+    })
+  } catch (error) {
+    console.warn('Speech input is unavailable:', error)
+  }
+}
+
+function speechButtonText (paramId) {
+  if (polishingParamId.value === paramId) return '...'
+  return listeningParamId.value === paramId ? 'Stop' : 'Mic'
+}
+
+function speechButtonTitle (paramId) {
+  if (!speechSupported) return 'Speech input is not supported in this browser'
+  if (polishingParamId.value === paramId) return 'Polishing speech text'
+  return listeningParamId.value === paramId ? 'Stop speech input' : 'Start speech input'
+}
+
+onBeforeUnmount(() => {
+  stopSpeechInput()
+})
 
 /* 父节点展示用 */
 const parentNode1Id = computed(() => props.selectedIds[0] ?? null)

@@ -343,21 +343,32 @@ export function useStitching(props, emit) {
     const info = getListAndEventByTrack(trackType)
     const rawClip = info?.raw?.[index] || info?.list?.[index] || null
 
+    const mediaUrl =
+      rawClip?.mediaUrl ||
+      rawClip?.mediaPath ||
+      rawClip?.url ||
+      rawClip?.imageUrl ||
+      rawClip?.thumbnailUrl ||
+      ''
+
     const payload = {
       __dragSource: trackType,
       track: trackType,
       index,
       clip: rawClip,
       type: rawClip?.type || '',
-      mediaUrl: rawClip?.mediaUrl || rawClip?.url || rawClip?.imageUrl || '',
-      imageUrl: rawClip?.imageUrl || rawClip?.mediaUrl || rawClip?.url || '',
-      originalUrl: rawClip?.originalUrl || rawClip?.mediaUrl || '',
-      fullUrl: rawClip?.fullUrl || rawClip?.mediaUrl || '',
-      thumbnailUrl: rawClip?.thumbnailUrl || '',
+      mediaPath: rawClip?.mediaPath || mediaUrl,
+      mediaUrl,
+      url: mediaUrl,
+      imageUrl: rawClip?.imageUrl || mediaUrl,
+      originalUrl: rawClip?.originalUrl || mediaUrl,
+      fullUrl: rawClip?.fullUrl || mediaUrl,
+      thumbnailUrl: rawClip?.thumbnailUrl || mediaUrl,
       name: rawClip?.name || rawClip?.filename || '',
       filename: rawClip?.filename || rawClip?.name || '',
       source: rawClip?.source || trackType,
     }
+
 
     const json = JSON.stringify(payload)
 

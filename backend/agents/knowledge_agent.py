@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .llm_config import create_chat_llm
 
 def knowledge_agent_node(state: AgentState):
     print("--- Running Knowledge Agent (Internal Brain) ---")
@@ -23,7 +23,7 @@ def knowledge_agent_node(state: AgentState):
         target_info = f"User Context: {user_input}"
 
     # 4. 调用 LLM
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.5)
+    llm = create_chat_llm(default_model="gpt-4o", temperature=0.5)
 
     system_prompt = """
     You are a Knowledge Specialist for an Art Generation System.

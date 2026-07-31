@@ -1,7 +1,7 @@
 import json
 import re
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+from .llm_config import create_chat_llm
 from .state import AgentState
 
 def final_prompt_agent_node(state: AgentState):
@@ -54,9 +54,9 @@ def final_prompt_agent_node(state: AgentState):
     # =========================================================================
 
     # 2. 初始化 LLM
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.3, 
+    llm = create_chat_llm(
+        default_model="gpt-4o",
+        temperature=0.3,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
 

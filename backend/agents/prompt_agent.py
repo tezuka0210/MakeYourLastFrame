@@ -1,7 +1,7 @@
 import json
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .llm_config import create_chat_llm
 
 # --- 1. 定义三套完全独立的 System Prompt ---
 
@@ -193,8 +193,8 @@ def prompt_agent_node(state: AgentState):
     print("global_context_prompt", global_context)
 
     # 2. Initialize LLM
-    llm = ChatOpenAI(
-        model="gpt-4o",
+    llm = create_chat_llm(
+        default_model="gpt-4o",
         temperature=0.7,
         model_kwargs={"response_format": {"type": "json_object"}}
     )

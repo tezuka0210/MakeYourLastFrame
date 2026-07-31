@@ -1,3 +1,9 @@
 __pycache__/
 __pycache__/
 backend/sam3/
+backend/.venv/
+backend/venv/
+backend/local_assets/
+backend/stitched_videos/
+*.db
+.env

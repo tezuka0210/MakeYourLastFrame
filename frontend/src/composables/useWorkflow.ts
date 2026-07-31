@@ -464,6 +464,8 @@ function toggleNodeCollapse(nodeId: string) {
   async function handleGenerate(nodeId:string, moduleId: string, parameters: Record<string, any>,nodeTitle: string) {
     isGenerating.value = true;
     showStatus('正在提交生成请求...');
+    const currentNode = allNodes.value.find(n => n.id === nodeId);
+    const inputAssets = currentNode?.assets?.input || {};
 
     try {
         // 1. 从共享工具中获取前一轮 Agent 上下文
@@ -505,6 +507,7 @@ function toggleNodeCollapse(nodeId: string) {
           title: nodeTitle,
           parent_ids: parentIds,
           module_id: moduleId,    // 要执行的模块
+          input_assets: inputAssets,
           parameters: {
             ...parameters,
             optimized_positive_prompt: optimizedPrompt.positive,
@@ -539,6 +542,7 @@ function toggleNodeCollapse(nodeId: string) {
           title: nodeTitle,
           parent_ids: parentIds,
           module_id: moduleId,    // 要执行的模块
+          input_assets: inputAssets,
           parameters: parameters,
         };
         // 3. 调用后端 create_node 接口（由后端处理生成和数据库更新）

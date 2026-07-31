@@ -6,6 +6,7 @@ import WaveSurfer from 'wavesurfer.js'
 import { workflowParameters } from '@/lib/useWorkflowForm.js';
 import { setPrevAgentContext, clearPrevAgentContext } from '@/lib/agentSharedState.js';
 import { updateEntityDisplay } from '@/lib/entityCard.js';
+import { exportSpeechTimingRecordsCsv, isSpeechInputSupported, startBrowserSpeechInput } from '@/lib/speechInput.js';
 
 
 // --- link color: light gray for all edges ---
@@ -1321,6 +1322,47 @@ export function renderTree(
       .on('mousedown', ev => ev.stopPropagation())
       .on('click', function (ev) { ev.stopPropagation(); if (onClick) onClick(ev) })
   }
+
+  function appendMediaPreview(parent, url, type) {
+    const safeType = type || deriveMediaKind(url)
+    if (safeType === 'image') {
+      return parent.append('xhtml:img')
+        .attr('src', url)
+        .attr('draggable', false)
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('object-fit', 'cover')
+        .style('display', 'block')
+    }
+
+    if (safeType === 'video') {
+      return parent.append('xhtml:video')
+        .attr('src', url)
+        .attr('muted', true)
+        .attr('loop', true)
+        .attr('playsinline', true)
+        .attr('preload', 'metadata')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('object-fit', 'cover')
+        .style('display', 'block')
+        .on('loadedmetadata', function () {
+          try {
+            this.currentTime = Math.min(0.1, this.duration || 0)
+          } catch (e) {}
+        })
+    }
+
+    return parent.append('xhtml:div')
+      .style('width', '100%')
+      .style('height', '100%')
+      .style('display', 'flex')
+      .style('align-items', 'center')
+      .style('justify-content', 'center')
+      .style('font-size', '18px')
+      .style('color', '#64748b')
+      .text('Audio')
+  }
 function getMediaBoxState(node, boxKey = 'default') {
   if (!node.__mediaBoxState) node.__mediaBoxState = {}
 
@@ -1567,9 +1609,11 @@ function addMediaBoxResizeHandle(box, boxState) {
         const wrap = row.append('xhtml:div')
           .style('width', '56px')
           .style('height', '56px')
-        if (type === 'image') {
-          wrap.append('xhtml:img').attr('src', url).style('width', '100%').style('height', '100%').style('object-fit', 'cover')
-        }
+          .style('border-radius', '8px')
+          .style('overflow', 'hidden')
+          .style('border', '1px solid #e5e7eb')
+          .style('background', '#f9fafb')
+        appendMediaPreview(wrap, url, type)
       })
 
       return row
@@ -1714,6 +1758,10 @@ function addMediaBoxResizeHandle(box, boxState) {
     let positivePhrases = parseCueString(promptState.positive || promptState.note)
     let negativePhrases = parseCueString(promptState.negative)
     let positiveContainer, negativeContainer, positiveCount, negativeCount
+    let speechSession = null
+    let speechButton = null
+    let speechListening = false
+    let speechPolishing = false
 
     function syncPromptStateFromUI() {
       const next = {
@@ -1723,6 +1771,62 @@ function addMediaBoxResizeHandle(box, boxState) {
       }
       syncPromptState(node, next, emit)
       return next
+    }
+
+    function updateSpeechButton() {
+      if (!speechButton) return
+      speechButton
+        .text(speechPolishing ? '...' : (speechListening ? 'Stop' : 'Mic'))
+        .attr('title', !isSpeechInputSupported()
+          ? 'Speech input is not supported in this browser'
+          : (speechPolishing ? 'Polishing speech text' : (speechListening ? 'Stop speech input' : 'Start speech input')))
+        .style('opacity', speechPolishing ? '0.65' : '1')
+    }
+
+    function stopSpeechInput() {
+      if (speechSession) {
+        speechSession.stop()
+        speechSession = null
+      }
+      speechListening = false
+      updateSpeechButton()
+    }
+
+    function toggleSpeechInput() {
+      if (!isSpeechInputSupported()) {
+        updateSpeechButton()
+        return
+      }
+
+      if (speechListening) {
+        stopSpeechInput()
+        return
+      }
+
+      try {
+        speechSession = startBrowserSpeechInput({
+          getValue: () => noteArea ? (noteArea.property('value') || '') : '',
+          setValue: (value) => {
+            if (!noteArea) return
+            noteArea.property('value', value)
+            syncPromptStateFromUI()
+          },
+          onStateChange: (isListening) => {
+            speechListening = isListening
+            if (!isListening) speechSession = null
+            updateSpeechButton()
+          },
+          onPolishingChange: (isPolishing) => {
+            speechPolishing = isPolishing
+            updateSpeechButton()
+          },
+          onError: (error) => {
+            console.warn('Speech input failed:', error)
+          }
+        })
+      } catch (error) {
+        console.warn('Speech input is unavailable:', error)
+      }
     }
 
     function buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind) {
@@ -1791,6 +1895,10 @@ function addMediaBoxResizeHandle(box, boxState) {
     }
 
     const sec = buildCollapsibleSection(parent, 'Prompts', true, (controls) => {
+      speechButton = buildTinyButton(controls, 'Mic', 'Start speech input', toggleSpeechInput)
+      updateSpeechButton()
+      buildTinyButton(controls, 'CSV', '导出语音测试数据', exportSpeechTimingRecordsCsv)
+
       buildTinyButton(controls, 'A', 'Agent assist', async () => {
         try {
           clearPrevAgentContext()

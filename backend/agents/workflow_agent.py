@@ -1,7 +1,7 @@
 import json
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .llm_config import create_chat_llm
 
 WORKFLOW_METADATA = {
     "ImageGenerateImage_Basic.json": "General image-to-image generation. Use ONLY for fusion, modification of images (no line art focus).",
@@ -60,8 +60,9 @@ def workflow_selector_node(state: AgentState):
             return {"selected_workflow": "Error", "workflow_title": "ImageCanny.json not available"}
 
     # 未触发硬规则才走LLM逻辑
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
+    llm = create_chat_llm(
+        default_model="gpt-4o-mini",
+        env_name="OPENAI_FAST_MODEL",
         temperature=0,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
