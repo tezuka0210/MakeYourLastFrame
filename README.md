@@ -72,3 +72,16 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Speech-to-text configuration
+
+The microphone control records audio in the browser and sends it to the backend;
+the backend uses DMXAPI's Qwen Omni audio-input endpoint by default, while
+retaining `gpt-4o-transcribe` as a configurable compatibility path. Copy
+`backend/.env.example` to `backend/.env` and set `SPEECH_TRANSCRIBE_API_KEY` to a
+DMXAPI Key before starting the backend. The key remains server-side and is never
+sent to the browser. Browser-recorded WebM is automatically converted to WAV
+before upload, so FFmpeg must be available on the backend host. Domain hotwords,
+aliases and post-recognition corrections are configured in
+`backend/speech_glossary.json`; see `backend/speech_glossary.example.json` and
+`docs/语音输入转文本功能说明.md` for the model-switching and glossary details.

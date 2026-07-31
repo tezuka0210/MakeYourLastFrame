@@ -209,7 +209,9 @@ export function startBrowserSpeechInput({
   onStateChange,
   onError,
   onPolishingChange,
-  lang = 'zh-CN'
+  // Let the backend/model preserve the language that was actually spoken.
+  // Callers may pass `en-US` or `zh-CN` to force one language when needed.
+  lang = import.meta.env.VITE_SPEECH_INPUT_LANGUAGE || 'auto'
 }) {
   if (!isSpeechInputSupported()) {
     throw new Error('Speech input is not supported in this browser')

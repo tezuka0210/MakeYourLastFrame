@@ -9,6 +9,8 @@ import shutil
 import mimetypes
 import re
 import tempfile
+import subprocess
+import io
 from flask import Flask, request, jsonify, send_from_directory, render_template, send_file, abort, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -383,9 +385,43 @@ SPEECH_POLISH_BASE_URL = resolve_chat_completions_url(
     os.getenv("SPEECH_POLISH_BASE_URL") or os.getenv("OPENAI_BASE_URL")
 )
 SPEECH_POLISH_MAX_CHARS = 800
-SPEECH_TRANSCRIBE_MODEL = os.getenv("SPEECH_TRANSCRIBE_MODEL", "whisper-1")
-SPEECH_TRANSCRIBE_BASE_URL = os.getenv("SPEECH_TRANSCRIBE_BASE_URL", "")
-SPEECH_TRANSCRIBE_AUTH_SCHEME = os.getenv("SPEECH_TRANSCRIBE_AUTH_SCHEME", "bearer").strip().lower()
+# DMXAPI's gpt-4o-transcribe endpoint is OpenAI compatible at the request level,
+# but it expects the API key directly in the Authorization header (no "Bearer").
+# Keep these configurable so another OpenAI-compatible speech provider can still
+# be used without changing application code.
+SPEECH_TRANSCRIBE_MODEL = os.getenv("SPEECH_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+SPEECH_TRANSCRIBE_BASE_URL = os.getenv(
+    "SPEECH_TRANSCRIBE_BASE_URL",
+    "https://www.dmxapi.cn/v1/audio/transcriptions"
+)
+SPEECH_TRANSCRIBE_AUTH_SCHEME = os.getenv("SPEECH_TRANSCRIBE_AUTH_SCHEME", "raw").strip().lower()
+SPEECH_TRANSCRIBE_TIMEOUT_SECONDS = float(os.getenv("SPEECH_TRANSCRIBE_TIMEOUT_SECONDS", "25"))
+SPEECH_TRANSCRIBE_FALLBACK_ENABLED = os.getenv(
+    "SPEECH_TRANSCRIBE_FALLBACK_ENABLED", "true"
+).strip().lower() == "true"
+SPEECH_TRANSCRIBE_USE_FALLBACK_AS_PRIMARY = os.getenv(
+    "SPEECH_TRANSCRIBE_USE_FALLBACK_AS_PRIMARY", "true"
+).strip().lower() == "true"
+SPEECH_TRANSCRIBE_FALLBACK_MODEL = os.getenv(
+    "SPEECH_TRANSCRIBE_FALLBACK_MODEL", "qwen3-omni-flash-all"
+)
+SPEECH_TRANSCRIBE_FALLBACK_BASE_URL = os.getenv(
+    "SPEECH_TRANSCRIBE_FALLBACK_BASE_URL",
+    "https://www.dmxapi.cn/v1/responses"
+)
+SPEECH_TRANSCRIBE_FALLBACK_TIMEOUT_SECONDS = float(
+    os.getenv("SPEECH_TRANSCRIBE_FALLBACK_TIMEOUT_SECONDS", "45")
+)
+SPEECH_TRANSCRIBE_CONVERT_WEBM_TO_WAV = os.getenv(
+    "SPEECH_TRANSCRIBE_CONVERT_WEBM_TO_WAV", "true"
+).strip().lower() == "true"
+SPEECH_TRANSCRIBE_FFMPEG_BIN = os.getenv("SPEECH_TRANSCRIBE_FFMPEG_BIN", "ffmpeg")
+SPEECH_TRANSCRIBE_FFMPEG_TIMEOUT_SECONDS = float(
+    os.getenv("SPEECH_TRANSCRIBE_FFMPEG_TIMEOUT_SECONDS", "30")
+)
+SPEECH_TRANSCRIBE_DEFAULT_LANGUAGE = os.getenv(
+    "SPEECH_TRANSCRIBE_DEFAULT_LANGUAGE", "auto"
+).strip().lower()
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "cpu")
 LOCAL_WHISPER_COMPUTE_TYPE = os.getenv("LOCAL_WHISPER_COMPUTE_TYPE", "int8")
@@ -396,6 +432,7 @@ SPEECH_GLOSSARY_PATH = os.getenv(
     os.path.join(BASE_DIR, "speech_glossary.json")
 )
 SPEECH_GLOSSARY_MAX_PROMPT_TERMS = int(os.getenv("SPEECH_GLOSSARY_MAX_PROMPT_TERMS", "80"))
+SPEECH_GLOSSARY_MAX_PROMPT_CHARS = int(os.getenv("SPEECH_GLOSSARY_MAX_PROMPT_CHARS", "1600"))
 _local_whisper_model = None
 _opencc_converter = None
 
@@ -409,18 +446,15 @@ def resolve_transcriptions_url(base_url: str) -> str:
         return f"{url}/audio/transcriptions"
     return f"{url}/v1/audio/transcriptions"
 
-def resolve_openai_client_base_url(base_url: str) -> str | None:
-    url = (base_url or "").strip().rstrip("/")
-    if not url:
-        return None
-    if url.endswith("/audio/transcriptions"):
-        url = url[: -len("/audio/transcriptions")].rstrip("/")
-    if not url.endswith("/v1"):
-        url = f"{url}/v1"
-    return url
-
 def normalize_transcription_language(language: str) -> str:
-    lang = (language or "").strip()
+    lang = (language or "").strip().lower()
+    if lang in ("auto", "auto-detect", "detect"):
+        lang = SPEECH_TRANSCRIBE_DEFAULT_LANGUAGE
+    if not lang:
+        lang = SPEECH_TRANSCRIBE_DEFAULT_LANGUAGE
+    lang = (lang or "").strip().lower()
+    if lang in ("auto", "auto-detect", "detect"):
+        return ""
     if not lang:
         return ""
     return lang.split("-", 1)[0].lower()
@@ -467,31 +501,210 @@ def convert_to_simplified_chinese(text: str) -> str:
         print("opencc is not installed; skipping traditional-to-simplified conversion.")
         return text
 
+def clean_speech_glossary_text(value) -> str:
+    """Convert a glossary field to a safe, compact text value."""
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def normalize_speech_hotword(item, index: int) -> dict | None:
+    """Accept both legacy strings and the richer hotword-object schema."""
+    if isinstance(item, str):
+        canonical = clean_speech_glossary_text(item)
+        aliases = []
+        category = ""
+        note = ""
+        priority = 0
+    elif isinstance(item, dict):
+        canonical = clean_speech_glossary_text(
+            item.get("term") or item.get("canonical") or item.get("text")
+        )
+        raw_aliases = item.get("aliases", [])
+        if isinstance(raw_aliases, str):
+            raw_aliases = [raw_aliases]
+        if not isinstance(raw_aliases, list):
+            raw_aliases = []
+        aliases = [clean_speech_glossary_text(alias) for alias in raw_aliases]
+        category = clean_speech_glossary_text(item.get("category"))
+        note = clean_speech_glossary_text(item.get("note") or item.get("context"))
+        try:
+            priority = int(item.get("priority", 0))
+        except (TypeError, ValueError):
+            priority = 0
+    else:
+        return None
+
+    if not canonical:
+        return None
+
+    # Keep aliases unique. An alias matching the canonical spelling is useful for
+    # case normalization in English, so it is deliberately not discarded here.
+    clean_aliases = []
+    seen_aliases = set()
+    for alias in aliases:
+        if alias and alias.casefold() not in seen_aliases:
+            clean_aliases.append(alias)
+            seen_aliases.add(alias.casefold())
+
+    return {
+        "term": canonical,
+        "aliases": clean_aliases,
+        "category": category,
+        "note": note,
+        "priority": priority,
+        "index": index,
+    }
+
+
 def load_speech_glossary() -> dict:
     if not SPEECH_GLOSSARY_PATH or not os.path.exists(SPEECH_GLOSSARY_PATH):
-        return {"terms": [], "corrections": {}}
+        return {"hotwords": [], "terms": [], "corrections": {}}
 
     try:
         with open(SPEECH_GLOSSARY_PATH, "r", encoding="utf-8") as f:
             glossary = json.load(f)
     except Exception as exc:
         print(f"Failed to load speech glossary: {exc}")
-        return {"terms": [], "corrections": {}}
+        return {"hotwords": [], "terms": [], "corrections": {}}
 
     terms = glossary.get("terms", [])
+    hotwords = glossary.get("hotwords", [])
     corrections = glossary.get("corrections", {})
     if not isinstance(terms, list):
         terms = []
+    if not isinstance(hotwords, list):
+        hotwords = []
     if not isinstance(corrections, dict):
         corrections = {}
 
-    clean_terms = [str(term).strip() for term in terms if str(term).strip()]
+    # `terms` is kept for backward compatibility. New entries should use
+    # `hotwords`, which additionally supports aliases, category and priority.
+    parsed_hotwords = []
+    seen_terms = set()
+    for index, item in enumerate([*hotwords, *terms]):
+        hotword = normalize_speech_hotword(item, index)
+        if not hotword:
+            continue
+        term_key = hotword["term"].casefold()
+        if term_key in seen_terms:
+            continue
+        seen_terms.add(term_key)
+        parsed_hotwords.append(hotword)
+
+    parsed_hotwords.sort(key=lambda item: (-item["priority"], item["index"]))
     clean_corrections = {
-        str(wrong).strip(): str(correct).strip()
+        clean_speech_glossary_text(wrong): clean_speech_glossary_text(correct)
         for wrong, correct in corrections.items()
-        if str(wrong).strip() and str(correct).strip()
+        if clean_speech_glossary_text(wrong) and clean_speech_glossary_text(correct)
     }
-    return {"terms": clean_terms, "corrections": clean_corrections}
+    return {
+        "hotwords": parsed_hotwords,
+        "terms": [item["term"] for item in parsed_hotwords],
+        "corrections": clean_corrections,
+    }
+
+
+def build_glossary_replacements(glossary: dict) -> dict:
+    """Create deterministic post-recognition corrections from the hotword list."""
+    replacements = {}
+    for hotword in glossary["hotwords"]:
+        term = hotword["term"]
+        # Canonical English words are also normalized to the configured casing.
+        replacements[term] = term
+        spaced_term = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", term)
+        spaced_term = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", spaced_term)
+        if spaced_term != term and re.search(r"[A-Za-z]", term):
+            # Most speech models insert a space in CamelCase names (Control Net,
+            # Open AI, Comfy UI). Generate that safe variant automatically so
+            # users do not have to add it to every hotword by hand.
+            replacements[spaced_term] = term
+        for alias in hotword["aliases"]:
+            replacements[alias] = term
+
+    # Explicit corrections override automatic alias mappings.
+    replacements.update(glossary["corrections"])
+    return replacements
+
+
+def replace_glossary_phrase(text: str, source: str, target: str) -> str:
+    """Replace Chinese phrases directly and English phrases with word boundaries.
+
+    Word boundaries avoid turning an unrelated word such as `workflowing` into a
+    hotword merely because it contains `workflow`. Matching English
+    case-insensitively also restores configured capitalization (for example,
+    `open ai` -> `OpenAI`).
+    """
+    if not source or source == target and not re.search(r"[A-Za-z]", source):
+        return text
+
+    if re.search(r"[A-Za-z0-9]", source):
+        pattern = rf"(?<![A-Za-z0-9]){re.escape(source)}(?![A-Za-z0-9])"
+        return re.sub(pattern, target, text, flags=re.IGNORECASE)
+    return text.replace(source, target)
+
+
+def build_speech_transcribe_prompt(language: str = "") -> str:
+    """Build a constrained prompt so online audio models use domain hotwords."""
+    if language == "zh":
+        base_prompt = """
+请将音频中的人声逐字转写为简体中文。
+只输出转写出的文字，不要描述音频、不要总结、不要添加标题或解释。
+保留说话者实际使用的中文、英文、数字、字母和标点；英文术语不要翻译。
+若没有清晰可辨的人声，则只输出空字符串。
+""".strip()
+        hotword_instruction = (
+            "以下是本领域热词。若音频中确实说到其标准词、别名或明显同音表达，"
+            "请输出标准词的准确写法和大小写；没有足够语音依据时不要臆造热词："
+        )
+    elif language == "en":
+        base_prompt = """
+Transcribe the spoken English audio verbatim into English text.
+Output only the transcript. Do not translate, summarize, describe the audio, or add a title.
+Preserve words, numbers, punctuation, and the exact casing of domain terms when clear.
+If there is no intelligible speech, output an empty string.
+""".strip()
+        hotword_instruction = (
+            "These are domain hotwords. Use their canonical spelling and casing only when "
+            "the audio clearly contains the term, an alias, or an obvious homophone; do not invent hotwords:"
+        )
+    else:
+        base_prompt = """
+Transcribe the spoken audio verbatim in its original language.
+Detect the spoken language automatically. For English speech, output English; for Chinese speech,
+output Simplified Chinese. Do not translate, summarize, describe the audio, or add a title.
+Preserve words, numbers, punctuation, and the exact casing of domain terms when clear.
+If there is no intelligible speech, output an empty string.
+""".strip()
+        hotword_instruction = (
+            "These are domain hotwords. Use their canonical spelling and casing only when "
+            "the audio clearly contains the term, an alias, or an obvious homophone; do not invent hotwords:"
+        )
+
+    glossary = load_speech_glossary()
+    rendered_items = []
+    current_length = len(base_prompt)
+
+    for hotword in glossary["hotwords"][:SPEECH_GLOSSARY_MAX_PROMPT_TERMS]:
+        item = hotword["term"]
+        if hotword["aliases"]:
+            item += f"（可能被识别为：{'、'.join(hotword['aliases'][:5])}）"
+        if hotword["category"]:
+            item += f"［{hotword['category']}］"
+        if hotword["note"]:
+            item += f"：{hotword['note']}"
+        line = f"- {item}"
+        if current_length + len(line) + 1 > SPEECH_GLOSSARY_MAX_PROMPT_CHARS:
+            break
+        rendered_items.append(line)
+        current_length += len(line) + 1
+
+    if not rendered_items:
+        return base_prompt
+
+    return (
+        f"{base_prompt}\n\n"
+        f"{hotword_instruction}\n"
+        + "\n".join(rendered_items)
+    )
 
 def build_local_whisper_prompt() -> str:
     glossary = load_speech_glossary()
@@ -506,10 +719,10 @@ def apply_speech_glossary(text: str) -> str:
     if not text:
         return text
 
-    corrections = load_speech_glossary()["corrections"]
+    replacements = build_glossary_replacements(load_speech_glossary())
     corrected = text
-    for wrong, correct in sorted(corrections.items(), key=lambda item: len(item[0]), reverse=True):
-        corrected = corrected.replace(wrong, correct)
+    for wrong, correct in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        corrected = replace_glossary_phrase(corrected, wrong, correct)
     return corrected
 
 def ms_between(start: float, end: float) -> float:
@@ -534,7 +747,7 @@ def transcribe_with_local_whisper(audio_file, language: str, request_received_at
         whisper_start = time.perf_counter()
         segments, _ = model.transcribe(
             temp_path,
-            language=language or "zh",
+            language=language or None,
             task="transcribe",
             initial_prompt=build_local_whisper_prompt(),
             vad_filter=True
@@ -562,65 +775,233 @@ def transcribe_with_local_whisper(audio_file, language: str, request_received_at
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
-def transcribe_with_openai_api(audio_file, language: str, request_received_at: float | None = None) -> tuple[str, dict]:
+def prepare_speech_audio_upload(audio_file) -> tuple[object, str, str, list[str]]:
+    """Return an upload stream, converting browser WebM to a compatible WAV when needed."""
+    filename = Path(audio_file.filename or "speech.webm").name
+    content_type = audio_file.mimetype or "audio/webm"
+    is_webm = filename.lower().endswith(".webm") or "webm" in content_type.lower()
+
+    if not SPEECH_TRANSCRIBE_CONVERT_WEBM_TO_WAV or not is_webm:
+        audio_file.stream.seek(0)
+        return audio_file.stream, filename, content_type, []
+
+    source_path = None
+    wav_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as source_file:
+            audio_file.stream.seek(0)
+            audio_file.save(source_file)
+            source_path = source_file.name
+
+        wav_path = f"{source_path}.wav"
+        completed = subprocess.run(
+            [
+                SPEECH_TRANSCRIBE_FFMPEG_BIN,
+                "-nostdin", "-v", "error", "-y",
+                "-i", source_path,
+                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+                wav_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SPEECH_TRANSCRIBE_FFMPEG_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0 or not os.path.exists(wav_path):
+            error_detail = (completed.stderr or "Unknown FFmpeg error").strip()[-1000:]
+            raise RuntimeError(f"Could not convert browser audio to WAV: {error_detail}")
+
+        return open(wav_path, "rb"), "speech.wav", "audio/wav", [source_path, wav_path]
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        for path in (source_path, wav_path):
+            if path and os.path.exists(path):
+                os.remove(path)
+        raise RuntimeError("FFmpeg is required to convert browser WebM audio before transcription") from exc
+    except Exception:
+        for path in (source_path, wav_path):
+            if path and os.path.exists(path):
+                os.remove(path)
+        raise
+
+
+def audio_format_from_filename(filename: str, content_type: str) -> str:
+    suffix = Path(filename).suffix.lstrip(".").lower()
+    if suffix:
+        return suffix
+    if "/" in content_type:
+        return content_type.split("/", 1)[1].split(";", 1)[0].lower()
+    return "wav"
+
+
+def transcribe_with_omni_fallback(
+    audio_bytes: bytes,
+    filename: str,
+    content_type: str,
+    api_key: str,
+    request_start: float,
+    primary_error: str,
+) -> tuple[str, dict]:
+    """Use the verified Qwen Omni audio-input model when the primary STT line is unavailable."""
+    encoded_audio = base64.b64encode(audio_bytes).decode("ascii")
+    fallback_start = time.perf_counter()
+    try:
+        response = requests.post(
+            SPEECH_TRANSCRIBE_FALLBACK_BASE_URL,
+            headers={
+                "Authorization": build_transcription_auth_header(api_key),
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": SPEECH_TRANSCRIBE_FALLBACK_MODEL,
+                "input": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": f"data:;base64,{encoded_audio}",
+                                "format": audio_format_from_filename(filename, content_type),
+                            },
+                        },
+                        {"type": "text", "text": build_speech_transcribe_prompt(language)},
+                    ],
+                }],
+                "stream": True,
+                "modalities": ["text"],
+            },
+            stream=True,
+            timeout=SPEECH_TRANSCRIBE_FALLBACK_TIMEOUT_SECONDS,
+        )
+        if response.status_code != HTTPStatus.OK:
+            error_detail = response.text.strip().replace("\n", " ")[:1000]
+            raise RuntimeError(
+                f"Speech provider error ({primary_error}); fallback error: {response.status_code} {error_detail}"
+            )
+
+        text_chunks = []
+        completed_text = ""
+        for raw_line in response.iter_lines():
+            if not raw_line:
+                continue
+            if isinstance(raw_line, bytes):
+                raw_line = raw_line.decode("utf-8", errors="replace")
+            if not raw_line.startswith("data: "):
+                continue
+            try:
+                event = json.loads(raw_line[6:])
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type", "")
+            if event_type == "response.output_text.delta":
+                text_chunks.append(str(event.get("delta", "")))
+            elif event_type == "response.output_text.done":
+                completed_text = str(event.get("text", ""))
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Speech provider did not respond ({primary_error}); fallback request failed: {exc}"
+        ) from exc
+
+    fallback_end = time.perf_counter()
+    text = "".join(text_chunks).strip() or completed_text.strip()
+
+    response_ready_at = time.perf_counter()
+    return apply_speech_glossary(text), {
+        "audioDurationMs": None,
+        "audioProcessingTimeMs": None,
+        "modelLoadTimeMs": None,
+        "whisperInferenceTimeMs": ms_between(fallback_start, fallback_end),
+        "resultProcessingTimeMs": None,
+        "backendTotalTimeMs": ms_between(request_start, response_ready_at),
+        "model": SPEECH_TRANSCRIBE_FALLBACK_MODEL,
+        "fallbackUsed": True,
+        "primaryError": primary_error,
+    }
+
+
+def transcribe_with_speech_api(audio_file, language: str, request_received_at: float | None = None) -> tuple[str, dict]:
     request_start = request_received_at or time.perf_counter()
     api_key = os.getenv("SPEECH_TRANSCRIBE_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("SPEECH_TRANSCRIBE_API_KEY or OPENAI_API_KEY is not configured")
 
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise RuntimeError("openai is not installed. Run: pip install openai") from exc
-
-    suffix = Path(audio_file.filename or "speech.webm").suffix or ".webm"
-    temp_path = None
     audio_processing_start = time.perf_counter()
+    # Keep the multipart form exactly aligned with DMXAPI's documented request:
+    # the required fields are only `model` and `file`.
+    payload = {"model": SPEECH_TRANSCRIBE_MODEL}
+    upload_stream, filename, content_type, cleanup_paths = prepare_speech_audio_upload(audio_file)
+    try:
+        audio_bytes = upload_stream.read()
+    finally:
+        if upload_stream is not audio_file.stream:
+            upload_stream.close()
+        for path in cleanup_paths:
+            if os.path.exists(path):
+                os.remove(path)
+    if not audio_bytes:
+        raise RuntimeError("Recorded audio is empty")
+    audio_processing_end = time.perf_counter()
+
+    if SPEECH_TRANSCRIBE_USE_FALLBACK_AS_PRIMARY:
+        return transcribe_with_omni_fallback(
+            audio_bytes,
+            filename,
+            content_type,
+            api_key,
+            request_start,
+            "Primary STT line bypassed by configuration",
+        )
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_audio:
-            audio_file.save(temp_audio)
-            temp_path = temp_audio.name
-        audio_processing_end = time.perf_counter()
-
-        client_kwargs = {"api_key": api_key}
-        client_base_url = resolve_openai_client_base_url(SPEECH_TRANSCRIBE_BASE_URL)
-        if client_base_url:
-            client_kwargs["base_url"] = client_base_url
-        client = OpenAI(**client_kwargs)
-
-        transcribe_kwargs = {
-            "model": SPEECH_TRANSCRIBE_MODEL,
-            "response_format": "text",
-        }
-        if language:
-            transcribe_kwargs["language"] = language
-
         whisper_start = time.perf_counter()
-        with open(temp_path, "rb") as audio:
-            transcript = client.audio.transcriptions.create(
-                file=audio,
-                **transcribe_kwargs
-            )
+        response = requests.post(
+            resolve_transcriptions_url(SPEECH_TRANSCRIBE_BASE_URL),
+            headers={"Authorization": build_transcription_auth_header(api_key)},
+            data=payload,
+            files={"file": (filename, io.BytesIO(audio_bytes), content_type)},
+            timeout=SPEECH_TRANSCRIBE_TIMEOUT_SECONDS,
+        )
         whisper_end = time.perf_counter()
+    except requests.RequestException as exc:
+        if SPEECH_TRANSCRIBE_FALLBACK_ENABLED:
+            return transcribe_with_omni_fallback(
+                audio_bytes, filename, content_type, api_key, request_start, str(exc)
+            )
+        raise RuntimeError(f"Speech provider request failed: {exc}") from exc
 
-        result_processing_start = time.perf_counter()
-        text = apply_speech_glossary(str(transcript or "").strip())
-        result_processing_end = time.perf_counter()
-        response_ready_at = time.perf_counter()
+    if response.status_code != HTTPStatus.OK:
+        error_detail = response.text.strip().replace("\n", " ")[:1000]
+        if SPEECH_TRANSCRIBE_FALLBACK_ENABLED and response.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            return transcribe_with_omni_fallback(
+                audio_bytes,
+                filename,
+                content_type,
+                api_key,
+                request_start,
+                f"{response.status_code} {error_detail}",
+            )
+        raise RuntimeError(f"Speech provider error: {response.status_code} {error_detail}")
 
-        timing = {
-            "audioDurationMs": None,
-            "audioProcessingTimeMs": ms_between(audio_processing_start, audio_processing_end),
-            "modelLoadTimeMs": None,
-            "whisperInferenceTimeMs": ms_between(whisper_start, whisper_end),
-            "resultProcessingTimeMs": ms_between(result_processing_start, result_processing_end),
-            "backendTotalTimeMs": ms_between(request_start, response_ready_at)
-        }
-        return text, timing
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Speech provider returned a non-JSON response") from exc
+
+    result_processing_start = time.perf_counter()
+    text = apply_speech_glossary(str(result.get("text") or "").strip())
+    result_processing_end = time.perf_counter()
+    response_ready_at = time.perf_counter()
+
+    timing = {
+        "audioDurationMs": None,
+        "audioProcessingTimeMs": ms_between(audio_processing_start, audio_processing_end),
+        "modelLoadTimeMs": None,
+        "whisperInferenceTimeMs": ms_between(whisper_start, whisper_end),
+        "resultProcessingTimeMs": ms_between(result_processing_start, result_processing_end),
+        "backendTotalTimeMs": ms_between(request_start, response_ready_at),
+        "model": SPEECH_TRANSCRIBE_MODEL,
+        "fallbackUsed": False,
+    }
+    return text, timing
 
 SPEECH_POLISH_SYSTEM_PROMPT = """
 你是语音输入文本整理器。只修正明显识别错误、补充标点、删除重复口癖，让文本更通顺。
@@ -679,10 +1060,10 @@ def transcribe_speech_audio():
     language = normalize_transcription_language(request.form.get('language', ''))
 
     try:
-        text, timing = transcribe_with_openai_api(audio_file, language, request_received_at)
+        text, timing = transcribe_with_speech_api(audio_file, language, request_received_at)
         return jsonify({
             "text": text,
-            "model": SPEECH_TRANSCRIBE_MODEL,
+            "model": timing.get("model", SPEECH_TRANSCRIBE_MODEL),
             "provider": "api",
             "timing": timing
         }), 200

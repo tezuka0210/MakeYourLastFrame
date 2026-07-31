@@ -1,46 +1,1598 @@
 {
+  "_readme": {
+    "purpose": "语音输入热词表：hotwords 用于生成识别提示，同时驱动识别后的确定性纠错。",
+    "aliases": "只写真实听错的写法（同音字、字母拆读、拼写变体）。别名会被强制改写成 term，因此合法中文词（如“蒙版”“深度图”）严禁作为英文词的 alias，否则会污染提示词正文。",
+    "case": "英文匹配不区分大小写，CamelCase 的空格变体由后端自动生成，不必手写（如 ComfyUI 自带 Comfy UI）。",
+    "priority": "按优先级降序注入识别提示，受 SPEECH_GLOSSARY_MAX_PROMPT_TERMS(80) 与 MAX_PROMPT_CHARS(1600) 截断，当前中文提示下实测前 47 条进入提示；其余条目仍参与识别后的纠错替换。新增高优先级词会挤掉尾部词条。",
+    "scope": "语音按钮只出现在 textarea（正向/负向提示词、音频文本），所以词表以“说得出来的创作内容”为主。"
+  },
+  "hotwords": [
+    {
+      "term": "ComfyUI",
+      "aliases": [
+        "康菲UI",
+        "康飞UI",
+        "坎菲UI",
+        "空飞UI"
+      ],
+      "category": "软件",
+      "note": "保持英文大小写，不翻译",
+      "priority": 100
+    },
+    {
+      "term": "SAM3",
+      "aliases": [
+        "SAM 3",
+        "S A M 3",
+        "SAM三",
+        "赛姆3"
+      ],
+      "category": "分割模型",
+      "note": "实体分割主引擎",
+      "priority": 99
+    },
+    {
+      "term": "Segment Anything Model",
+      "aliases": [
+        "Segment Anything"
+      ],
+      "category": "分割模型",
+      "priority": 88
+    },
+    {
+      "term": "FLUX.2",
+      "aliases": [
+        "FLUX 2",
+        "Flux二",
+        "福克斯2"
+      ],
+      "category": "图像模型",
+      "note": "本项目主力图像底模",
+      "priority": 98
+    },
+    {
+      "term": "Klein",
+      "aliases": [
+        "klein base",
+        "flux-2-klein"
+      ],
+      "category": "图像模型",
+      "note": "指 flux-2-klein 基座",
+      "priority": 97
+    },
+    {
+      "term": "Flux Fill",
+      "aliases": [
+        "flux1-fill",
+        "flux fill dev"
+      ],
+      "category": "图像模型",
+      "note": "局部重绘专用",
+      "priority": 95
+    },
+    {
+      "term": "Wan2.2",
+      "aliases": [
+        "Wan 2.2",
+        "万2.2",
+        "湾2.2",
+        "完2.2",
+        "万相2.2"
+      ],
+      "category": "视频模型",
+      "note": "本项目主力视频底模",
+      "priority": 98
+    },
+    {
+      "term": "Wan2.1",
+      "aliases": [
+        "Wan 2.1",
+        "万2.1",
+        "湾2.1",
+        "万相2.1"
+      ],
+      "category": "视频模型",
+      "priority": 94
+    },
+    {
+      "term": "Z-Image Turbo",
+      "aliases": [
+        "Z Image Turbo",
+        "z_image_turbo",
+        "Z图像 Turbo"
+      ],
+      "category": "图像模型",
+      "priority": 93
+    },
+    {
+      "term": "Qwen-Image",
+      "aliases": [
+        "Qwen Image",
+        "千问图像"
+      ],
+      "category": "图像模型",
+      "priority": 86
+    },
+    {
+      "term": "Fun Camera",
+      "aliases": [
+        "fun camera 模块"
+      ],
+      "category": "视频模块",
+      "note": "Wan2.2 运镜控制分支",
+      "priority": 85
+    },
+    {
+      "term": "Fun Control",
+      "category": "视频模块",
+      "note": "Wan2.2 结构控制分支",
+      "priority": 85
+    },
+    {
+      "term": "MakeYourLastFrame",
+      "aliases": [
+        "MYLF",
+        "Make Your Last Frame"
+      ],
+      "category": "系统",
+      "priority": 84
+    },
+    {
+      "term": "T2VTree",
+      "aliases": [
+        "T2V Tree",
+        "T 2 V Tree"
+      ],
+      "category": "系统",
+      "note": "节点化创作路径",
+      "priority": 82
+    },
+    {
+      "term": "ComfyUI API",
+      "category": "接口",
+      "priority": 70
+    },
+    {
+      "term": "提示词",
+      "aliases": [
+        "提示次",
+        "提示辞",
+        "提示磁"
+      ],
+      "category": "概念",
+      "priority": 96
+    },
+    {
+      "term": "正向提示词",
+      "aliases": [
+        "正相提示词",
+        "正向提示次"
+      ],
+      "category": "概念",
+      "priority": 95
+    },
+    {
+      "term": "负向提示词",
+      "aliases": [
+        "负相提示词",
+        "反向提示词",
+        "负向提示次"
+      ],
+      "category": "概念",
+      "priority": 95
+    },
+    {
+      "term": "反向词",
+      "category": "概念",
+      "priority": 60
+    },
+    {
+      "term": "工作流",
+      "aliases": [
+        "工作留",
+        "工作楼"
+      ],
+      "category": "概念",
+      "priority": 94
+    },
+    {
+      "term": "节点",
+      "category": "概念",
+      "priority": 88
+    },
+    {
+      "term": "实体",
+      "category": "概念",
+      "priority": 90
+    },
+    {
+      "term": "实体分割",
+      "category": "概念",
+      "priority": 88
+    },
+    {
+      "term": "蒙版",
+      "aliases": [
+        "蒙板"
+      ],
+      "category": "概念",
+      "priority": 90
+    },
+    {
+      "term": "遮罩",
+      "aliases": [
+        "遮照"
+      ],
+      "category": "概念",
+      "priority": 84
+    },
+    {
+      "term": "潜空间",
+      "aliases": [
+        "浅空间",
+        "前空间"
+      ],
+      "category": "概念",
+      "priority": 78
+    },
+    {
+      "term": "参考图",
+      "category": "概念",
+      "priority": 86
+    },
+    {
+      "term": "参考图权重",
+      "category": "概念",
+      "priority": 66
+    },
+    {
+      "term": "重绘幅度",
+      "category": "参数",
+      "priority": 66
+    },
+    {
+      "term": "文生图",
+      "aliases": [
+        "文生土"
+      ],
+      "category": "模式",
+      "priority": 93
+    },
+    {
+      "term": "图生图",
+      "category": "模式",
+      "priority": 93
+    },
+    {
+      "term": "文生视频",
+      "category": "模式",
+      "priority": 93
+    },
+    {
+      "term": "图生视频",
+      "category": "模式",
+      "priority": 93
+    },
+    {
+      "term": "首尾帧",
+      "aliases": [
+        "首尾桢",
+        "手尾帧"
+      ],
+      "category": "模式",
+      "note": "首尾帧生视频",
+      "priority": 94
+    },
+    {
+      "term": "首帧",
+      "aliases": [
+        "首桢"
+      ],
+      "category": "概念",
+      "priority": 92
+    },
+    {
+      "term": "尾帧",
+      "aliases": [
+        "尾桢",
+        "未帧"
+      ],
+      "category": "概念",
+      "priority": 92
+    },
+    {
+      "term": "关键帧",
+      "aliases": [
+        "关键桢"
+      ],
+      "category": "概念",
+      "priority": 91
+    },
+    {
+      "term": "补帧",
+      "aliases": [
+        "补桢",
+        "不帧"
+      ],
+      "category": "模块",
+      "priority": 92
+    },
+    {
+      "term": "插帧",
+      "aliases": [
+        "插桢"
+      ],
+      "category": "模块",
+      "priority": 82
+    },
+    {
+      "term": "局部重绘",
+      "aliases": [
+        "局部众绘"
+      ],
+      "category": "模块",
+      "priority": 92
+    },
+    {
+      "term": "扩图",
+      "category": "模块",
+      "priority": 78
+    },
+    {
+      "term": "抠图",
+      "aliases": [
+        "抠土"
+      ],
+      "category": "模块",
+      "priority": 88
+    },
+    {
+      "term": "背景移除",
+      "category": "模块",
+      "priority": 86
+    },
+    {
+      "term": "去背景",
+      "category": "模块",
+      "priority": 80
+    },
+    {
+      "term": "高清修复",
+      "category": "模块",
+      "priority": 88
+    },
+    {
+      "term": "超分辨率",
+      "category": "模块",
+      "priority": 78
+    },
+    {
+      "term": "超分",
+      "category": "模块",
+      "priority": 76
+    },
+    {
+      "term": "边缘检测",
+      "aliases": [
+        "边源检测",
+        "边缘监测"
+      ],
+      "category": "模块",
+      "priority": 82
+    },
+    {
+      "term": "图像拼接",
+      "category": "模块",
+      "priority": 76
+    },
+    {
+      "term": "图层叠加",
+      "category": "模块",
+      "priority": 74
+    },
+    {
+      "term": "物体迁移",
+      "category": "模块",
+      "priority": 78
+    },
+    {
+      "term": "元素分割",
+      "category": "模块",
+      "priority": 76
+    },
+    {
+      "term": "人物一致性",
+      "category": "概念",
+      "priority": 80
+    },
+    {
+      "term": "时序一致性",
+      "category": "概念",
+      "priority": 76
+    },
+    {
+      "term": "镜头控制",
+      "category": "模块",
+      "priority": 90
+    },
+    {
+      "term": "文生音频",
+      "category": "模块",
+      "priority": 70
+    },
+    {
+      "term": "TextToImage",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "ImageToImage",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "TextToVideo",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "ImageToVideo",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "FirstAndLastFrameControl",
+      "aliases": [
+        "FL Frame To Video"
+      ],
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "CameraControl",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "FrameInterpolation",
+      "category": "模块",
+      "priority": 72
+    },
+    {
+      "term": "ImageHDRestoration",
+      "category": "模块",
+      "priority": 70
+    },
+    {
+      "term": "ImageInpainting",
+      "category": "模块",
+      "priority": 70
+    },
+    {
+      "term": "RemoveBackground",
+      "category": "模块",
+      "priority": 70
+    },
+    {
+      "term": "ImageMerging",
+      "category": "模块",
+      "priority": 68
+    },
+    {
+      "term": "LayerStacking",
+      "category": "模块",
+      "priority": 68
+    },
+    {
+      "term": "ImageCanny",
+      "category": "模块",
+      "priority": 68
+    },
+    {
+      "term": "SegmentElement",
+      "category": "模块",
+      "priority": 68
+    },
+    {
+      "term": "Put It Here",
+      "aliases": [
+        "Put_It_Here"
+      ],
+      "category": "模块",
+      "priority": 68
+    },
+    {
+      "term": "TextToAudio",
+      "category": "模块",
+      "priority": 66
+    },
+    {
+      "term": "ControlNet",
+      "aliases": [
+        "控图网"
+      ],
+      "category": "控制模型",
+      "priority": 87
+    },
+    {
+      "term": "Canny",
+      "aliases": [
+        "坎尼",
+        "堪尼"
+      ],
+      "category": "边缘检测",
+      "priority": 86
+    },
+    {
+      "term": "LoRA",
+      "aliases": [
+        "洛拉模型",
+        "萝拉模型"
+      ],
+      "category": "微调",
+      "note": "别名仅限明确说到模型时",
+      "priority": 84
+    },
+    {
+      "term": "IPAdapter",
+      "aliases": [
+        "IP 适配器"
+      ],
+      "category": "参考控制",
+      "priority": 83
+    },
+    {
+      "term": "InstantID",
+      "category": "身份控制",
+      "priority": 78
+    },
+    {
+      "term": "OpenPose",
+      "aliases": [
+        "欧朋 Pose"
+      ],
+      "category": "姿态控制",
+      "priority": 82
+    },
+    {
+      "term": "DWPose",
+      "category": "姿态控制",
+      "priority": 74
+    },
+    {
+      "term": "Depth Anything",
+      "aliases": [
+        "DepthAnything"
+      ],
+      "category": "深度估计",
+      "priority": 80
+    },
+    {
+      "term": "GroundingDINO",
+      "aliases": [
+        "Grounding 蒂诺"
+      ],
+      "category": "目标检测",
+      "priority": 76
+    },
+    {
+      "term": "rembg",
+      "aliases": [
+        "rem bg",
+        "让 bg"
+      ],
+      "category": "抠图后端",
+      "priority": 79
+    },
+    {
+      "term": "u2net",
+      "aliases": [
+        "U2 net",
+        "U 二 net"
+      ],
+      "category": "抠图模型",
+      "priority": 78
+    },
+    {
+      "term": "u2netp",
+      "category": "抠图模型",
+      "priority": 66
+    },
+    {
+      "term": "isnet-general-use",
+      "aliases": [
+        "isnet general use"
+      ],
+      "category": "抠图模型",
+      "priority": 66
+    },
+    {
+      "term": "isnet-anime",
+      "aliases": [
+        "isnet anime"
+      ],
+      "category": "抠图模型",
+      "priority": 66
+    },
+    {
+      "term": "silueta",
+      "aliases": [
+        "西鲁埃塔"
+      ],
+      "category": "抠图模型",
+      "priority": 64
+    },
+    {
+      "term": "RIFE",
+      "category": "补帧模型",
+      "priority": 78
+    },
+    {
+      "term": "Real-ESRGAN",
+      "aliases": [
+        "Real ESRGAN"
+      ],
+      "category": "超分模型",
+      "priority": 76
+    },
+    {
+      "term": "GFPGAN",
+      "aliases": [
+        "GFP GAN"
+      ],
+      "category": "人脸修复",
+      "priority": 70
+    },
+    {
+      "term": "CodeFormer",
+      "category": "人脸修复",
+      "priority": 70
+    },
+    {
+      "term": "FaceDetailer",
+      "category": "节点",
+      "priority": 70
+    },
+    {
+      "term": "KSampler",
+      "category": "节点",
+      "priority": 80
+    },
+    {
+      "term": "VAE",
+      "aliases": [
+        "V A E"
+      ],
+      "category": "节点",
+      "priority": 78
+    },
+    {
+      "term": "CLIP",
+      "category": "节点",
+      "priority": 78
+    },
+    {
+      "term": "CLIP Text Encode",
+      "aliases": [
+        "CLIP 文本编码"
+      ],
+      "category": "节点",
+      "priority": 66
+    },
+    {
+      "term": "VAE Encode",
+      "aliases": [
+        "V A E 编码"
+      ],
+      "category": "节点",
+      "priority": 64
+    },
+    {
+      "term": "VAE Decode",
+      "aliases": [
+        "V A E 解码"
+      ],
+      "category": "节点",
+      "priority": 64
+    },
+    {
+      "term": "Checkpoint Loader",
+      "category": "节点",
+      "priority": 66
+    },
+    {
+      "term": "Empty Latent Image",
+      "category": "节点",
+      "priority": 62
+    },
+    {
+      "term": "safetensors",
+      "aliases": [
+        "safe tensors",
+        "赛夫 tensors"
+      ],
+      "category": "权重格式",
+      "priority": 72
+    },
+    {
+      "term": "fp8",
+      "aliases": [
+        "F P 8",
+        "FP 八"
+      ],
+      "category": "量化",
+      "priority": 70
+    },
+    {
+      "term": "bf16",
+      "aliases": [
+        "B F 16"
+      ],
+      "category": "量化",
+      "priority": 66
+    },
+    {
+      "term": "Steps",
+      "category": "参数",
+      "priority": 68
+    },
+    {
+      "term": "Guidance",
+      "category": "参数",
+      "priority": 68
+    },
+    {
+      "term": "CFG Scale",
+      "aliases": [
+        "CFG"
+      ],
+      "category": "参数",
+      "priority": 66
+    },
+    {
+      "term": "Denoise",
+      "category": "参数",
+      "priority": 68
+    },
+    {
+      "term": "Seed",
+      "category": "参数",
+      "priority": 66
+    },
+    {
+      "term": "Sampler",
+      "category": "参数",
+      "priority": 64
+    },
+    {
+      "term": "Scheduler",
+      "category": "参数",
+      "priority": 64
+    },
+    {
+      "term": "Euler a",
+      "aliases": [
+        "欧拉 a"
+      ],
+      "category": "采样器",
+      "priority": 60
+    },
+    {
+      "term": "DPM++ 2M Karras",
+      "aliases": [
+        "DPM 2M Karras",
+        "DPM plus plus 2M Karras"
+      ],
+      "category": "采样器",
+      "priority": 58
+    },
+    {
+      "term": "Batch Size",
+      "category": "参数",
+      "priority": 62
+    },
+    {
+      "term": "FPS",
+      "aliases": [
+        "F P S"
+      ],
+      "category": "参数",
+      "priority": 66
+    },
+    {
+      "term": "Multiplier",
+      "category": "参数",
+      "priority": 58
+    },
+    {
+      "term": "Low Threshold",
+      "category": "参数",
+      "priority": 56
+    },
+    {
+      "term": "High Threshold",
+      "category": "参数",
+      "priority": 56
+    },
+    {
+      "term": "Aspect Ratio",
+      "category": "参数",
+      "priority": 58
+    },
+    {
+      "term": "Inpainting",
+      "category": "编辑",
+      "priority": 70
+    },
+    {
+      "term": "Outpainting",
+      "category": "编辑",
+      "priority": 66
+    },
+    {
+      "term": "Mask",
+      "category": "编辑",
+      "priority": 62
+    },
+    {
+      "term": "Latent Upscale",
+      "category": "放大",
+      "priority": 60
+    },
+    {
+      "term": "Ultimate SD Upscale",
+      "category": "放大",
+      "priority": 56
+    },
+    {
+      "term": "Workflow",
+      "category": "概念",
+      "priority": 74
+    },
+    {
+      "term": "Keyframe",
+      "category": "视频",
+      "priority": 62
+    },
+    {
+      "term": "Motion Brush",
+      "category": "视频",
+      "priority": 56
+    },
+    {
+      "term": "Visual Asset",
+      "category": "论文术语",
+      "priority": 62
+    },
+    {
+      "term": "Re-Authoring",
+      "aliases": [
+        "Re Authoring"
+      ],
+      "category": "论文术语",
+      "priority": 62
+    },
+    {
+      "term": "Entity Grounding",
+      "category": "论文术语",
+      "priority": 62
+    },
+    {
+      "term": "Intent Drafting",
+      "category": "论文术语",
+      "priority": 60
+    },
+    {
+      "term": "Intent Alignment",
+      "category": "论文术语",
+      "priority": 58
+    },
+    {
+      "term": "Visual Anchor",
+      "category": "论文术语",
+      "priority": 60
+    },
+    {
+      "term": "Temporal Continuity",
+      "category": "论文术语",
+      "priority": 56
+    },
+    {
+      "term": "Hard Constraint",
+      "category": "论文术语",
+      "priority": 56
+    },
+    {
+      "term": "Master Agent",
+      "category": "论文术语",
+      "priority": 58
+    },
+    {
+      "term": "Workflow Agent",
+      "category": "论文术语",
+      "priority": 58
+    },
+    {
+      "term": "Prompt Agent",
+      "category": "论文术语",
+      "priority": 58
+    },
+    {
+      "term": "推镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "拉镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "摇镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "移镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "跟镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "环绕镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "手持镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "升降镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "俯拍",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "仰拍",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "平视",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "鸟瞰",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "第一人称视角",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "过肩镜头",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "变焦",
+      "category": "运镜",
+      "priority": 52
+    },
+    {
+      "term": "推近",
+      "category": "运镜",
+      "priority": 50
+    },
+    {
+      "term": "拉远",
+      "category": "运镜",
+      "priority": 50
+    },
+    {
+      "term": "慢动作",
+      "category": "运镜",
+      "priority": 50
+    },
+    {
+      "term": "延时摄影",
+      "category": "运镜",
+      "priority": 48
+    },
+    {
+      "term": "长镜头",
+      "category": "运镜",
+      "priority": 50
+    },
+    {
+      "term": "空镜头",
+      "category": "运镜",
+      "priority": 48
+    },
+    {
+      "term": "特写",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "近景",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "中景",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "全景",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "远景",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "大远景",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "微距",
+      "category": "景别",
+      "priority": 52
+    },
+    {
+      "term": "逆光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "侧逆光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "顶光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "轮廓光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "体积光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "丁达尔光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "伦勃朗光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "冷暖对比",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "黄金时刻",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "蓝调时刻",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "霓虹光",
+      "category": "光影",
+      "priority": 48
+    },
+    {
+      "term": "赛博朋克",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "蒸汽波",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "水墨风格",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "工笔画",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "超写实",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "概念艺术",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "分镜草图",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "胶片颗粒",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "电影感",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "国风",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "新中式",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "废土风格",
+      "category": "风格",
+      "priority": 48
+    },
+    {
+      "term": "景深",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "虚化",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "焦外",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "广角",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "长焦",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "鱼眼",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "高动态范围",
+      "category": "画质",
+      "priority": 46
+    },
+    {
+      "term": "4K",
+      "category": "画质",
+      "priority": 50
+    },
+    {
+      "term": "8K",
+      "category": "画质",
+      "priority": 50
+    },
+    {
+      "term": "金属质感",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "玻璃材质",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "陶瓷釉面",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "丝绸",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "木纹",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "大理石",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "皮革",
+      "category": "材质",
+      "priority": 44
+    },
+    {
+      "term": "多手指",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "肢体畸变",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "面部崩坏",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "重影",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "穿模",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "水印",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "低质量",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "模糊",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "过曝",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "噪点",
+      "category": "负向",
+      "priority": 46
+    },
+    {
+      "term": "曾侯乙编钟",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "青花缠枝莲纹梅瓶",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "唐三彩",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "掐丝珐琅",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "景泰蓝",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "缂丝",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "汝窑天青釉",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "后母戊鼎",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "何尊",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "越王勾践剑",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "金缕玉衣",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "马踏飞燕",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "三星堆青铜面具",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "兵马俑",
+      "category": "文物",
+      "priority": 50
+    },
+    {
+      "term": "敦煌壁画",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "莫高窟",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "飞天",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "反弹琵琶",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "九色鹿",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "藻井",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "斗拱",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "榫卯",
+      "category": "文化遗产",
+      "priority": 50
+    },
+    {
+      "term": "《千里江山图》",
+      "category": "书画",
+      "priority": 48
+    },
+    {
+      "term": "《清明上河图》",
+      "category": "书画",
+      "priority": 48
+    },
+    {
+      "term": "《洛神赋图》",
+      "category": "书画",
+      "priority": 48
+    },
+    {
+      "term": "《富春山居图》",
+      "category": "书画",
+      "priority": 48
+    },
+    {
+      "term": "《五牛图》",
+      "category": "书画",
+      "priority": 48
+    },
+    {
+      "term": "DashScope",
+      "category": "平台",
+      "priority": 74
+    },
+    {
+      "term": "Whisper",
+      "aliases": [
+        "威斯珀"
+      ],
+      "category": "语音识别",
+      "priority": 72
+    },
+    {
+      "term": "OpenAI",
+      "category": "平台",
+      "priority": 72
+    },
+    {
+      "term": "Qwen",
+      "category": "平台",
+      "priority": 72
+    },
+    {
+      "term": "通义千问",
+      "category": "平台",
+      "priority": 72
+    },
+    {
+      "term": "gpt-4o-transcribe",
+      "aliases": [
+        "GPT 4o transcribe"
+      ],
+      "category": "语音识别",
+      "priority": 60
+    },
+    {
+      "term": "Stable Diffusion",
+      "category": "生态模型",
+      "priority": 30
+    },
+    {
+      "term": "SDXL",
+      "aliases": [
+        "S D X L"
+      ],
+      "category": "生态模型",
+      "priority": 30
+    },
+    {
+      "term": "SD 1.5",
+      "aliases": [
+        "SD1.5",
+        "S D 一点五"
+      ],
+      "category": "生态模型",
+      "priority": 28
+    },
+    {
+      "term": "SD3",
+      "aliases": [
+        "S D 三"
+      ],
+      "category": "生态模型",
+      "priority": 28
+    },
+    {
+      "term": "FLUX.1",
+      "aliases": [
+        "FLUX 1"
+      ],
+      "category": "生态模型",
+      "priority": 30
+    },
+    {
+      "term": "Flux Kontext",
+      "aliases": [
+        "Flux Context"
+      ],
+      "category": "生态模型",
+      "priority": 30
+    },
+    {
+      "term": "HunyuanVideo",
+      "category": "生态模型",
+      "priority": 28
+    },
+    {
+      "term": "CogVideoX",
+      "category": "生态模型",
+      "priority": 28
+    },
+    {
+      "term": "LTX Video",
+      "aliases": [
+        "LTXVideo"
+      ],
+      "category": "生态模型",
+      "priority": 26
+    },
+    {
+      "term": "AnimateDiff",
+      "category": "生态模型",
+      "priority": 26
+    },
+    {
+      "term": "Stable Video Diffusion",
+      "aliases": [
+        "SVD"
+      ],
+      "category": "生态模型",
+      "priority": 26
+    }
+  ],
   "terms": [
     "ComfyUI",
-    "Workflow",
-    "ControlNet",
-    "Canny",
-    "LoRA",
-    "KSampler",
-    "Flux",
-    "DashScope",
-    "Whisper",
-    "OpenAI",
-    "提示词",
-    "正向提示词",
-    "负向提示词",
     "工作流",
     "节点",
     "实体",
-    "图生图",
+    "提示词",
+    "正向提示词",
+    "负向提示词",
     "文生图",
+    "图生图",
     "文生视频",
     "图生视频",
+    "首尾帧",
+    "关键帧",
     "补帧",
     "抠图",
-    "局部重绘",
     "背景移除",
+    "局部重绘",
     "高清修复",
     "镜头控制"
   ],
   "corrections": {
     "康菲UI": "ComfyUI",
     "康飞UI": "ComfyUI",
+    "坎菲UI": "ComfyUI",
     "康菲 U I": "ComfyUI",
     "工作留": "工作流",
+    "工作楼": "工作流",
     "提示次": "提示词",
-    "罗拉": "LoRA",
-    "劳拉": "LoRA",
-    "肯尼": "Canny",
-    "坎尼": "Canny",
-    "控图网": "ControlNet",
-    "open ai": "OpenAI",
-    "openAI": "OpenAI",
-    "whisper": "Whisper",
-    "dash scope": "DashScope"
+    "提示辞": "提示词",
+    "正相提示词": "正向提示词",
+    "负相提示词": "负向提示词",
+    "蒙板": "蒙版",
+    "遮照": "遮罩",
+    "浅空间": "潜空间",
+    "补桢": "补帧",
+    "插桢": "插帧",
+    "关键桢": "关键帧",
+    "首桢": "首帧",
+    "尾桢": "尾帧",
+    "桢率": "帧率",
+    "边源检测": "边缘检测",
+    "控图网": "ControlNet"
   }
 }

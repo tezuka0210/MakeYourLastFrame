@@ -1897,7 +1897,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     const sec = buildCollapsibleSection(parent, 'Prompts', true, (controls) => {
       speechButton = buildTinyButton(controls, 'Mic', 'Start speech input', toggleSpeechInput)
       updateSpeechButton()
-      buildTinyButton(controls, 'CSV', '导出语音测试数据', exportSpeechTimingRecordsCsv)
+      buildTinyButton(controls, 'CSV', 'Export Test Data', exportSpeechTimingRecordsCsv)
 
       buildTinyButton(controls, 'A', 'Agent assist', async () => {
         try {
