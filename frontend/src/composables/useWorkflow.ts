@@ -423,6 +423,43 @@ function toggleNodeCollapse(nodeId: string) {
     }
   }
 
+  async function submitNodeFeedback(nodeId: string, feedback: Record<string, unknown>) {
+    const currentNode = allNodes.value.find(node => node.id === nodeId)
+    if (!currentNode) return false
+
+    const nextParameters = {
+      ...(currentNode.parameters || {}),
+      generation_feedback: feedback
+    }
+
+    showStatus('正在提交生成反馈...')
+    try {
+      const response = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          module_id: currentNode.module_id,
+          parameters: nextParameters,
+          assets: currentNode.assets || {},
+          status: currentNode.status
+        })
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || `HTTP ${response.status}`)
+      }
+
+      const updatedTree: { nodes: DbNode[] } = await response.json()
+      processTreeData(updatedTree.nodes, '反馈已提交。')
+      return true
+    } catch (error: any) {
+      console.error('提交生成反馈失败:', error)
+      showStatus(`反馈提交失败: ${error.message}`)
+      return false
+    }
+  }
+
   
   /** (Action) 处理文件上传 (由 WorkflowForm.vue 调用) */
   async function handleFileUpload(file: File) {
@@ -810,5 +847,6 @@ function toggleNodeCollapse(nodeId: string) {
     closePreview,
     toggleNodeCollapse,
     updateNodeMedia,
+    submitNodeFeedback,
   }
 }

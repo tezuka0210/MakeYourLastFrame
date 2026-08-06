@@ -1309,10 +1309,6 @@ export function renderTree(
     return input
   }
 
-  // 三档尺寸：
-  //   xs  行内的 +/× —— 保持原来的 18px，不占地方
-  //   sm  麦克风 —— 比主操作略小
-  //   md  A / 重新生成等主操作
   const TINY_BUTTON_SIZES = {
     xs: { size: '18px', padding: '0 6px', font: '10px' },
     sm: { size: '22px', padding: '0 7px', font: '11px' },
@@ -1358,7 +1354,6 @@ export function renderTree(
       .on('mousedown', ev => ev.stopPropagation())
       .on('click', function (ev) { ev.stopPropagation(); if (onClick) onClick(ev) })
 
-    // hover 反显：底色填充、文字转白。disabled 时不反显。
     button
       .on('mouseenter.tone', function () {
         if (this.disabled) return
@@ -1781,6 +1776,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     const cueTypes = ['relation', 'entity', 'attribute']
     const cueBaseColor = getNodeBorderColor(node) || '#94a3b8'
     const CUE_COLOR_OPACITY = 0.6
+    const CUE_HOVER_OPACITY = 0.9
     const cuePalette = deriveCuePalette(cueBaseColor)
     const CUE_ROW_RADIUS = '8px'
     const CUE_INPUT_RADIUS = '6px'
@@ -1851,17 +1847,20 @@ function addMediaBoxResizeHandle(box, boxState) {
         relation: {
           color: hslColor(base.h - 14, saturation, accentLightness, CUE_COLOR_OPACITY),
           tint: hslColor(base.h - 14, saturation * 0.68, 90, CUE_COLOR_OPACITY),
-          hover: hslColor(base.h - 14, saturation, accentLightness, 0.3 * CUE_COLOR_OPACITY)
+          activeColor: hslColor(base.h - 14, saturation, accentLightness, CUE_HOVER_OPACITY),
+          activeTint: hslColor(base.h - 14, saturation * 0.68, 90, CUE_HOVER_OPACITY)
         },
         entity: {
           color: hslColor(base.h, saturation * 0.86, accentLightness + 5, CUE_COLOR_OPACITY),
           tint: hslColor(base.h, saturation * 0.56, 94, CUE_COLOR_OPACITY),
-          hover: hslColor(base.h, saturation * 0.86, accentLightness + 5, 0.25 * CUE_COLOR_OPACITY)
+          activeColor: hslColor(base.h, saturation * 0.86, accentLightness + 5, CUE_HOVER_OPACITY),
+          activeTint: hslColor(base.h, saturation * 0.56, 94, CUE_HOVER_OPACITY)
         },
         attribute: {
           color: hslColor(base.h + 14, saturation * 0.72, accentLightness + 9, CUE_COLOR_OPACITY),
           tint: hslColor(base.h + 14, saturation * 0.48, 97, CUE_COLOR_OPACITY),
-          hover: hslColor(base.h + 14, saturation * 0.72, accentLightness + 9, 0.2 * CUE_COLOR_OPACITY)
+          activeColor: hslColor(base.h + 14, saturation * 0.72, accentLightness + 9, CUE_HOVER_OPACITY),
+          activeTint: hslColor(base.h + 14, saturation * 0.48, 97, CUE_HOVER_OPACITY)
         }
       }
     }
@@ -1974,33 +1973,6 @@ function addMediaBoxResizeHandle(box, boxState) {
     let speechButton = null
     let speechListening = false
     let speechPolishing = false
-    // 三个控件共用一套图标规格：按钮外形一致，靠图标本身区分。
-    const ICON_SIZE = 13
-    const iconWrap = body => `
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="${ICON_SIZE}" height="${ICON_SIZE}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
-
-    const microphoneIcon = iconWrap(`
-        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
-        <path d="M5 10a7 7 0 0 0 14 0"></path>
-        <path d="M12 17v5"></path>
-        <path d="M8 22h8"></path>`)
-
-    // 机器人：方头 + 天线 + 两只眼睛，替代原来的字母 A
-    const agentIcon = iconWrap(`
-        <rect x="4" y="8" width="16" height="12" rx="3"></rect>
-        <path d="M12 8V4"></path>
-        <circle cx="12" cy="3" r="1.2"></circle>
-        <path d="M2 13v3"></path>
-        <path d="M22 13v3"></path>
-        <circle cx="9" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>
-        <circle cx="15" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>`)
-
-    // 重新生成：两段首尾相接的弧线各带一个箭头，比单个 ↻ 更能读出「再跑一次」
-    const regenerateIcon = iconWrap(`
-        <path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"></path>
-        <path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"></path>
-        <polyline points="18 2.5 18 6 14.5 6"></polyline>
-        <polyline points="6 21.5 6 18 9.5 18"></polyline>`)
 
     function syncPromptStateFromUI() {
       const next = {
@@ -2014,25 +1986,48 @@ function addMediaBoxResizeHandle(box, boxState) {
       return next
     }
 
+    // 三个控件共用一套图标规格：按钮外形一致，靠图标本身区分。
+    const ICON_SIZE = 13
+    const iconWrap = body => `
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="${ICON_SIZE}" height="${ICON_SIZE}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+
+    const microphoneIcon = iconWrap(`
+        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+        <path d="M5 10a7 7 0 0 0 14 0"></path>
+        <path d="M12 17v5"></path>
+        <path d="M8 22h8"></path>`)
+
+    // 停止录音：实心方块
+    const stopIcon = iconWrap(`<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"></rect>`)
+
+    // 机器人：方头 + 天线 + 两只眼睛，替代原来的字母 A
+    const agentIcon = iconWrap(`
+        <rect x="4" y="8" width="16" height="12" rx="3"></rect>
+        <path d="M12 8V4"></path>
+        <circle cx="12" cy="3" r="1.2"></circle>
+        <path d="M2 13v3"></path>
+        <path d="M22 13v3"></path>
+        <circle cx="9" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>
+        <circle cx="15" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>`)
+
+    // 重新生成：两段首尾相接的弧线各带箭头，比单个 ↻ 更能读出「再跑一次」
+    const regenerateIcon = iconWrap(`
+        <path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"></path>
+        <path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"></path>
+        <polyline points="18 2.5 18 6 14.5 6"></polyline>
+        <polyline points="6 21.5 6 18 9.5 18"></polyline>`)
+
+    // 转写中的省略号与图标同尺寸，避免状态切换时视觉重量跳动
+    const ellipsisIcon = `<span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:${ICON_SIZE}px;height:${ICON_SIZE}px;font-size:${ICON_SIZE}px;line-height:1">…</span>`
+
     function updateSpeechButton() {
       if (!speechButton) return
-      const supported = isSpeechInputSupported()
-      const title = !supported
-        ? 'Speech input is not supported in this browser'
-        : (speechPolishing ? 'Polishing speech text' : (speechListening ? 'Stop speech input' : 'Start speech input'))
       speechButton
-        .html(speechPolishing ? `<span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:${ICON_SIZE}px;height:${ICON_SIZE}px;font-size:${ICON_SIZE}px;line-height:1">…</span>` : microphoneIcon)
-        .attr('title', title)
-        .attr('aria-label', title)
-        .attr('aria-pressed', speechListening ? 'true' : 'false')
-        .style('display', 'inline-flex')
-        .style('align-items', 'center')
-        .style('justify-content', 'center')
-        .style('width', '22px')
-        .style('padding', '0')
-        .style('color', speechListening ? '#b45353' : '#4b5563')
-        .style('background', speechListening ? '#fdf2f2' : '#ffffff')
-        .style('opacity', !supported || speechPolishing ? '0.55' : '1')
+        .html(speechPolishing ? ellipsisIcon : (speechListening ? stopIcon : microphoneIcon))
+        .attr('title', !isSpeechInputSupported()
+          ? 'Speech input is not supported in this browser'
+          : (speechPolishing ? 'Polishing speech text' : (speechListening ? 'Stop speech input' : 'Start speech input')))
+        .style('opacity', speechPolishing ? '0.65' : '1')
     }
 
     function stopSpeechInput() {
@@ -2107,31 +2102,21 @@ function addMediaBoxResizeHandle(box, boxState) {
 
     // --- cue 拖拽排序 ---
     // 权重不显示也不可直接编辑，但它决定渲染顺序，也是模型实际吃到的值。
-    // 因此拖拽改变顺序后，按新的视觉次序在 [1.0, 1.5] 区间内重新均匀分配权重，
-    // 使「看到的顺序」与「模型收到的权重」始终一致。
+    // 拖拽不产生新数值：把这一组已有的权重降序排好，按新位置重新落座。
     function roundWeight(value) {
-      // 生成模型只接受一位小数
       const parsed = Number.parseFloat(value)
       return Math.round((Number.isFinite(parsed) ? parsed : 1.0) * 10) / 10
     }
 
-    // 拖拽不产生新的权重值，只把这一组已有的权重按新位置重新落座。
-    // 模型给的档位（可能是 1.6 / 1.45 / 0.9，不限于某个区间）因此被完整保留，
-    // 变化的只是哪一条 cue 拿到哪一档。
     function reassignWeightsByPosition(weights) {
-      return [...weights]
-        .map(roundWeight)
-        .sort((a, b) => b - a)
+      return [...weights].map(roundWeight).sort((a, b) => b - a)
     }
 
-    // 拖拽状态：记录被拖的那条在扁平数组里的下标，以及它属于哪个类型组。
-    // 只允许组内排序 —— 跨组拖动等于改变 cue 的语义类型，那是另一回事。
     let cueDragState = null
 
     function reorderPositiveCues(type, fromIndex, toIndex, placeAfter) {
       if (fromIndex === toIndex) return
 
-      // 该组当前的视觉顺序（sortCueEntries 已按权重降序）
       const groupIndices = sortCueEntries(positivePhrases, type).map(e => e.index)
       const from = groupIndices.indexOf(fromIndex)
       let to = groupIndices.indexOf(toIndex)
@@ -2142,7 +2127,6 @@ function addMediaBoxResizeHandle(box, boxState) {
       if (from < to) to -= 1
       reordered.splice(placeAfter ? to + 1 : to, 0, fromIndex)
 
-      // 取这一组原有的权重，降序排好，再按新位置逐个落座
       const weights = reassignWeightsByPosition(
         groupIndices.map(flatIndex => positivePhrases[flatIndex]?.weight)
       )
@@ -2151,10 +2135,8 @@ function addMediaBoxResizeHandle(box, boxState) {
         weight: weights[position]
       }))
 
-      // 同时把扁平数组里该组成员的物理次序也改成新次序。
-      // 一位小数只有 6 个档位，超过 6 条时权重会重复；
-      // sortCueEntries 的并列兜底是数组下标，所以物理次序必须跟着变，
-      // 否则重新渲染时并列的几条会跳回原来的相对位置。
+      // 权重可能重复（一位小数档位有限），排序的并列兜底是数组下标，
+      // 因此物理次序必须跟着变，否则重新渲染时并列的几条会跳回原位。
       const slotQueue = [...groupIndices].sort((a, b) => a - b)
       const next = [...positivePhrases]
       slotQueue.forEach((slot, i) => { next[slot] = updated[i] })
@@ -2177,15 +2159,14 @@ function addMediaBoxResizeHandle(box, boxState) {
           row.style('opacity', '0.45')
           try {
             ev.dataTransfer.effectAllowed = 'move'
-            // Firefox 要求写入数据才会触发 drag 事件
+            // Firefox 要求写入数据才会触发后续 drag 事件
             ev.dataTransfer.setData('text/plain', String(index))
-          } catch (_) { /* 某些环境不允许写 dataTransfer，忽略 */ }
+          } catch (_) { /* 某些环境禁止写 dataTransfer */ }
         })
         .on('dragend', function () {
           cueDragState = null
           this.style.cursor = 'grab'
-          row.style('opacity', '1')
-          row.style('border-top', '').style('border-bottom', '')
+          row.style('opacity', '1').style('box-shadow', 'none')
         })
 
       const clearDropHint = () => row.style('box-shadow', 'none')
@@ -2196,7 +2177,6 @@ function addMediaBoxResizeHandle(box, boxState) {
           if (cueDragState.index === index) return
           ev.preventDefault()
           ev.dataTransfer.dropEffect = 'move'
-          // 用上/下阴影提示会落在这一条的前面还是后面
           const rect = this.getBoundingClientRect()
           const after = (ev.clientY - rect.top) > rect.height / 2
           row.style('box-shadow', after
@@ -2250,7 +2230,7 @@ function addMediaBoxResizeHandle(box, boxState) {
         .style('border-radius', CUE_ROW_RADIUS)
         .style('border-left', `2px solid ${config.color}`)
         .style('background', config.tint)
-        .style('transition', 'box-shadow 0.14s ease, background 0.14s ease')
+        .style('transition', 'box-shadow 0.14s ease, background 0.14s ease, border-color 0.14s ease')
 
       attachCueHover(row, phrase)
 
@@ -2276,8 +2256,18 @@ function addMediaBoxResizeHandle(box, boxState) {
 
       attachCueDrag(row, handle, entry, config)
       row
-        .on('mouseenter.cueRowStyle', function () { this.style.boxShadow = `0 0 0 1px ${config.hover}` })
-        .on('mouseleave.cueRowStyle', function () { this.style.boxShadow = 'none' })
+        .on('mouseenter.cueRowStyle', function () {
+          this.style.background = config.activeTint
+          this.style.borderLeftColor = config.activeColor
+          this.style.boxShadow = `0 0 0 1px ${config.activeColor}`
+          handle.style('color', config.activeColor)
+        })
+        .on('mouseleave.cueRowStyle', function () {
+          this.style.background = config.tint
+          this.style.borderLeftColor = config.color
+          this.style.boxShadow = 'none'
+          handle.style('color', config.color)
+        })
 
       const input = row.append('xhtml:input')
         .attr('type', 'text')
@@ -2304,8 +2294,12 @@ function addMediaBoxResizeHandle(box, boxState) {
         })
 
       buildTinyButton(row, '+', `Add ${config.label.toLowerCase()} cue below`, () => addPositiveCue(config.type, index))
+        .style('padding', '0')
+        .style('min-width', '18px')
         .style('justify-self', 'end')
-      buildTinyButton(row, '×', `Delete ${config.label.toLowerCase()} cue`, () => deletePositiveCue(index), { tone: 'danger' })
+      buildTinyButton(row, '×', `Delete ${config.label.toLowerCase()} cue`, () => deletePositiveCue(index))
+        .style('padding', '0')
+        .style('min-width', '18px')
         .style('justify-self', 'end')
     }
 
@@ -2315,21 +2309,9 @@ function addMediaBoxResizeHandle(box, boxState) {
       positiveCount.text(`(${positivePhrases.filter(item => String(item.text || '').trim()).length})`)
 
       const configs = [
-        {
-          type: 'relation',
-          label: 'Relations',
-          ...cuePalette.relation
-        },
-        {
-          type: 'entity',
-          label: 'Entities',
-          ...cuePalette.entity
-        },
-        {
-          type: 'attribute',
-          label: 'Attributes',
-          ...cuePalette.attribute
-        }
+        { type: 'relation', label: 'Relations', ...cuePalette.relation },
+        { type: 'entity', label: 'Entities', ...cuePalette.entity },
+        { type: 'attribute', label: 'Attributes', ...cuePalette.attribute }
       ]
 
       configs.forEach(config => {
@@ -2369,6 +2351,8 @@ function addMediaBoxResizeHandle(box, boxState) {
 
         buildTinyButton(head, '+', `Add ${config.label.toLowerCase()} cue`, () => addPositiveCue(config.type))
           .style('margin-left', 'auto')
+          .style('padding', '0')
+          .style('min-width', '18px')
 
         if (!entries.length) {
           body.append('xhtml:div')
@@ -2408,11 +2392,20 @@ function addMediaBoxResizeHandle(box, boxState) {
           .style('border-left', '2px solid rgba(209, 213, 219, 0.6)')
           .style('border-radius', CUE_ROW_RADIUS)
           .style('background', 'rgba(247, 247, 247, 0.6)')
+          .style('transition', 'box-shadow 0.14s ease, background 0.14s ease, border-color 0.14s ease')
           .style('margin-bottom', '4px')
         attachCueHover(row, phrase)
         row
-          .on('mouseenter.cueRowStyle', function () { this.style.boxShadow = '0 0 0 1px rgba(107, 114, 128, 0.084)' })
-          .on('mouseleave.cueRowStyle', function () { this.style.boxShadow = 'none' })
+          .on('mouseenter.cueRowStyle', function () {
+            this.style.background = 'rgba(247, 247, 247, 0.9)'
+            this.style.borderLeftColor = 'rgba(209, 213, 219, 0.9)'
+            this.style.boxShadow = '0 0 0 1px rgba(107, 114, 128, 0.126)'
+          })
+          .on('mouseleave.cueRowStyle', function () {
+            this.style.background = 'rgba(247, 247, 247, 0.6)'
+            this.style.borderLeftColor = 'rgba(209, 213, 219, 0.6)'
+            this.style.boxShadow = 'none'
+          })
 
         row.append('xhtml:input')
           .attr('type', 'text')
@@ -2445,12 +2438,12 @@ function addMediaBoxResizeHandle(box, boxState) {
           negativePhrases = next
           renderNegativeEditor()
           syncPromptStateFromUI()
-        }).style('justify-self', 'end')
+        }).style('padding', '0').style('min-width', '18px').style('justify-self', 'end')
         buildTinyButton(row, '×', 'Delete negative cue', () => {
           negativePhrases = negativePhrases.filter((_, itemIndex) => itemIndex !== index)
           renderNegativeEditor()
           syncPromptStateFromUI()
-        }).style('justify-self', 'end')
+        }).style('padding', '0').style('min-width', '18px').style('justify-self', 'end')
       })
     }
 
@@ -2557,14 +2550,8 @@ function addMediaBoxResizeHandle(box, boxState) {
     positiveCount = posHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
     positiveContainer = posWrap.append('xhtml:div')
 
-    const negWrap = cuesRow.append('xhtml:div')
-      .style('display', 'flex')
-      .style('flex-direction', 'column')
-      .style('gap', '4px')
-    const negHead = negWrap.append('xhtml:div')
-      .style('display', 'flex')
-      .style('align-items', 'center')
-      .style('gap', '6px')
+    const negWrap = cuesRow.append('xhtml:div').style('display', 'flex').style('flex-direction', 'column').style('gap', '4px')
+    const negHead = negWrap.append('xhtml:div').style('display', 'flex').style('align-items', 'center').style('gap', '6px')
     negHead.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Negative cues')
     negativeCount = negHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
     buildTinyButton(negHead, '+', 'Add negative cue', () => {
@@ -2712,10 +2699,138 @@ function addMediaBoxResizeHandle(box, boxState) {
     return sec
   }
 
+  function shouldShowFeedback(node) {
+    const category = getNodeCategory(node)
+    const excludedModules = new Set(['Upload', 'TextImage', 'AddText', 'AddWorkflow'])
+    return ['image', 'video', 'audio'].includes(category) && !excludedModules.has(node.module_id)
+  }
+
+  function buildFeedbackSection(parent, node, emit) {
+    const options = [
+      { value: 'exact', label: 'Exactly right' },
+      { value: 'reframed', label: 'Different, better' },
+      { value: 'deferred', label: 'Different, keep it' },
+      { value: 'redo', label: 'Redo' }
+    ]
+    const savedFeedback = node.parameters?.generation_feedback || {}
+    let selectedValue = options.some(option => option.value === savedFeedback.value)
+      ? savedFeedback.value
+      : ''
+    let submitButton = null
+    let status = null
+
+    const setSubmitting = (submitting) => {
+      if (!submitButton) return
+      submitButton
+        .property('disabled', submitting)
+        .attr('aria-disabled', submitting ? 'true' : 'false')
+        .style('opacity', '1')
+        .style('cursor', submitting ? 'default' : 'pointer')
+    }
+
+    const setStatus = (message = '', color = '#64748b') => {
+      if (!status) return
+      status
+        .text(message)
+        .style('color', color)
+        .style('display', message ? 'block' : 'none')
+    }
+
+    const submitFeedback = () => {
+      if (!selectedValue) {
+        setStatus('Select one')
+        return
+      }
+      const selected = options.find(option => option.value === selectedValue)
+      if (!selected) return
+
+      const feedback = {
+        value: selected.value,
+        label: selected.label,
+        submitted_at: new Date().toISOString(),
+        media_type: getNodeCategory(node),
+        output_urls: getOutputMediaUrls(node)
+      }
+
+      setSubmitting(true)
+      setStatus('Submitting…', '#6b7280')
+      emit('submit-feedback', node.id, feedback, (succeeded) => {
+        if (succeeded) {
+          setStatus('Submitted')
+        } else {
+          setStatus('Could not submit', '#9f5f5f')
+          setSubmitting(false)
+        }
+      })
+    }
+
+    const sec = buildCollapsibleSection(parent, 'Feedback', false, (controls) => {
+      submitButton = buildTinyButton(controls, '', 'Submit feedback', submitFeedback)
+        .attr('aria-label', 'Submit feedback')
+        .html('<svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="M2 8L8 2M4 2h4v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+    })
+
+    const list = sec.content.append('xhtml:div')
+      .style('display', 'grid')
+      .style('grid-template-columns', 'minmax(0, 1fr) minmax(0, 1fr)')
+      .style('column-gap', '4px')
+      .style('row-gap', '1px')
+      .style('padding', '0 2px')
+
+    const radioName = `generation-feedback-${String(node.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    options.forEach(option => {
+      const row = list.append('xhtml:label')
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('gap', '4px')
+        .style('min-width', '0')
+        .style('min-height', '18px')
+        .style('padding', '0 3px')
+        .style('border-radius', '5px')
+        .style('font-size', '9px')
+        .style('color', '#4b5563')
+        .style('cursor', 'pointer')
+        .on('mousedown', event => event.stopPropagation())
+        .on('click', event => event.stopPropagation())
+        .on('mouseenter', function () { d3.select(this).style('background', '#f7f7f7') })
+        .on('mouseleave', function () { d3.select(this).style('background', 'transparent') })
+
+      row.append('xhtml:input')
+        .attr('type', 'radio')
+        .attr('name', radioName)
+        .attr('value', option.value)
+        .property('checked', selectedValue === option.value)
+        .style('width', '11px')
+        .style('height', '11px')
+        .style('flex', '0 0 11px')
+        .style('margin', '0')
+        .style('accent-color', getNodeBorderColor(node))
+        .style('cursor', 'pointer')
+        .on('change', function () {
+          selectedValue = this.value
+          setStatus('')
+        })
+
+      row.append('xhtml:span')
+        .style('min-width', '0')
+        .style('white-space', 'nowrap')
+        .text(option.label)
+    })
+
+    status = list.append('xhtml:div')
+      .style('display', 'none')
+      .style('grid-column', '1 / -1')
+      .style('padding', '1px 3px 0 18px')
+      .style('font-size', '8px')
+      .style('color', '#64748b')
+
+    return sec
+  }
+
   function buildSettingsSection(parent, node) {
     const sec = buildCollapsibleSection(parent, 'Settings', false)
     const params = node.parameters || {}
-    const excluded = new Set(['text', 'prompt_note', 'global_context', 'positive_prompt', 'negative_prompt'])
+    const excluded = new Set(['text', 'prompt_note', 'global_context', 'positive_prompt', 'negative_prompt', 'generation_feedback'])
     const keys = Object.keys(params).filter(k => !excluded.has(k))
     if (!keys.length) {
       sec.content.append('xhtml:div').style('font-size', '10px').style('color', '#9ca3af').text('No adjustable parameters for the current function')
@@ -2769,6 +2884,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')
     buildResultsSection(body, d, emit, state)
+    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
     buildSettingsSection(body, d)
 
     addResizeHandle(card, d, svgElement, allNodesData)
@@ -2805,6 +2921,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')
     buildResultsSection(body, d, emit, state)
+    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
     buildSettingsSection(body, d)
 
     addResizeHandle(card, d, svgElement, allNodesData)

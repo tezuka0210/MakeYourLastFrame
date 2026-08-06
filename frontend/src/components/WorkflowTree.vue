@@ -80,7 +80,8 @@ const emit = defineEmits([
   'refresh-node',
   'upload-media',
   'update-node-media-from-parent',
-  'regenerate-node'
+  'regenerate-node',
+  'submit-feedback'
 ])
 
 const svgContainer = ref(null)

@@ -53,6 +53,7 @@
                   @refresh-node="handleRefreshNode"
                   @upload-media="updateNodeMedia"
                   @regenerate-node="handleGenerate"
+                  @submit-feedback="handleSubmitFeedback"
                   @merge-nodes="handleMergeNodes"
                   @update:ungroup="handleUngroup"
                 />
@@ -196,6 +197,7 @@ const {
   closePreview,
   toggleNodeCollapse,
   updateNodeMedia,
+  submitNodeFeedback,
 } = useWorkflow()
 
 const isLeftPaneOpen = ref(false)
@@ -326,6 +328,15 @@ const handleRefreshNode = (
     }
     return node
   })
+}
+
+const handleSubmitFeedback = async (
+  nodeId: string,
+  feedback: Record<string, unknown>,
+  onComplete?: (succeeded: boolean) => void
+) => {
+  const succeeded = await submitNodeFeedback(nodeId, feedback)
+  onComplete?.(succeeded)
 }
 
 const isGenerationPopoverOpen = ref(false)
