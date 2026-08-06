@@ -2860,11 +2860,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     const card = fo.append('xhtml:div').attr('class', 'node-card').attr('data-node-category', getNodeCategory(d)).style('width', '100%').style('height', '100%').style('display', 'flex').style('flex-direction', 'column').style('border-width', '2px').style('border-color', getNodeBorderColor(d)).style('border-radius', '10px').style('background', '#ffffff').style('position', 'relative').style('cursor', 'pointer').style('user-select', 'none').style('-webkit-user-select', 'none')
     setCardSelected(card, d, isVisuallySelected(d, selectedIds))
     addRightClickMenu(card, d, emit)
-    card.on('click', ev => {
-      if (ev.target && ev.target.closest && ev.target.closest('button, img, video, input, textarea, select')) return
-      ev.stopPropagation()
-      toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 })
-    })
+    card.on('click', ev => ev.stopPropagation())
 
     buildHeader(card, d)
 
@@ -2884,8 +2880,8 @@ function addMediaBoxResizeHandle(box, boxState) {
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')
     buildResultsSection(body, d, emit, state)
-    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
     buildSettingsSection(body, d)
+    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
 
     addResizeHandle(card, d, svgElement, allNodesData)
     addTooltip(gEl, d)
@@ -2898,11 +2894,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     const card = fo.append('xhtml:div').attr('class', 'node-card').attr('data-node-category', getNodeCategory(d)).style('width', '100%').style('height', '100%').style('display', 'flex').style('flex-direction', 'column').style('border-width', '2px').style('border-color', getNodeBorderColor(d)).style('border-radius', '10px').style('background', '#ffffff').style('position', 'relative').style('cursor', 'pointer').style('user-select', 'none').style('-webkit-user-select', 'none')
     setCardSelected(card, d, isVisuallySelected(d, selectedIds))
     addRightClickMenu(card, d, emit)
-    card.on('click', ev => {
-      if (ev.target && ev.target.closest && ev.target.closest('button, input, textarea, select')) return
-      ev.stopPropagation()
-      toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 })
-    })
+    card.on('click', ev => ev.stopPropagation())
     buildHeader(card, d)
 
     const body = card.append('xhtml:div')
@@ -2921,8 +2913,8 @@ function addMediaBoxResizeHandle(box, boxState) {
     buildAssetsSection(body, d, emit, state)
     buildPromptSection(body, d, emit, () => state.inputUrls[0] || '')
     buildResultsSection(body, d, emit, state)
-    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
     buildSettingsSection(body, d)
+    if (shouldShowFeedback(d)) buildFeedbackSection(body, d, emit)
 
     addResizeHandle(card, d, svgElement, allNodesData)
     addTooltip(gEl, d)
@@ -2979,11 +2971,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     // 选中样式（保留原逻辑）
     setCardSelected(card, d, isVisuallySelected(d, selectedIds))
 
-    card.on('click', ev => {
-      if (ev.target && ev.target.closest && ev.target.closest('button')) return
-      ev.stopPropagation()
-      toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 })
-    })
+    card.on('click', ev => ev.stopPropagation())
 
     card.on('mouseenter', () =>
       card.selectAll('.dots-container').style('opacity', '1')
@@ -3135,11 +3123,7 @@ function renderCompositeNode(gEl, d, selectedIds, emit) {
 
   setCardSelected(card, d, isVisuallySelected(d, selectedIds))
 
-  card.on('click', ev => {
-    if (ev.target && ev.target.closest && ev.target.closest('button, img, video')) return
-    ev.stopPropagation()
-    toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 })
-  })
+  card.on('click', ev => ev.stopPropagation())
 
   // 统一标题栏
   buildHeader(card, d)
@@ -3351,20 +3335,21 @@ function renderMediaContent(container, data) {
         .attr('stroke', NODE_COLORS.auxBorder)
         .attr('stroke-width', 2);
 
-      gEl.append('text')
+      const initTitle = gEl.append('text')
         .attr('text-anchor', 'middle')
         .attr('dy', '0.35em')
         .style('font-size', '14px')
         .style('fill', '#6b7280')
-        .style('pointer-events', 'none')
+        .style('pointer-events', 'all')
+        .style('cursor', 'pointer')
         .text('Init');
 
-      // 左键：保持原来的选中逻辑
-      gEl.style('cursor', 'pointer')
-        .on('click', (ev) => {
-          ev.stopPropagation();
-          toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 });
-        });
+      // 只有节点标题文字触发选中，圆形空白区域仅阻止事件继续冒泡。
+      initTitle.on('click', (ev) => {
+        ev.stopPropagation();
+        toggleSelectionForNode(svgElement, d, selectedIds, emit, { allowComposite: true, maxCount: 2 });
+      });
+      gEl.on('click', ev => ev.stopPropagation());
 
       // 右键：弹出菜单 → Add Intent Draft
       gEl.on('contextmenu', (ev) => {
