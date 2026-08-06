@@ -1975,7 +1975,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     let speechListening = false
     let speechPolishing = false
     // 三个控件共用一套图标规格：按钮外形一致，靠图标本身区分。
-    const ICON_SIZE = 12
+    const ICON_SIZE = 13
     const iconWrap = body => `
       <svg aria-hidden="true" viewBox="0 0 24 24" width="${ICON_SIZE}" height="${ICON_SIZE}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
 

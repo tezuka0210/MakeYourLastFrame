@@ -230,13 +230,14 @@ onMounted(() => {
     transform 0.12s ease;
 }
 
+/* hover 反显：与节点内按钮保持同一套逻辑（底色填充、图标转白） */
 .toolbar-btn:hover {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #374151;
+  background: #4b5563;
+  border-color: #4b5563;
+  color: #ffffff;
   box-shadow:
-    0 0 0 1px rgba(15, 23, 42, 0.05),
-    0 3px 10px rgba(15, 23, 42, 0.1);
+    0 0 0 1px rgba(15, 23, 42, 0.06),
+    0 3px 10px rgba(15, 23, 42, 0.14);
 }
 
 .toolbar-btn:active {
@@ -258,25 +259,33 @@ onMounted(() => {
   color: #ffffff;
 }
 
-.toolbar-btn--danger:hover {
-  background: #fff7f7;
+/* 危险操作：常态描边浅红，hover 才实心反红 —— 与节点删除按钮一致 */
+.toolbar-btn--danger {
   border-color: #fecaca;
   color: #dc2626;
-  box-shadow:
-    0 0 0 1px rgba(220, 38, 38, 0.05),
-    0 3px 10px rgba(220, 38, 38, 0.08);
 }
 
+.toolbar-btn--danger:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(220, 38, 38, 0.08),
+    0 3px 10px rgba(220, 38, 38, 0.18);
+}
+
+/* 图标由 15px 提到 18px：28px 按钮内径 26px，18px 占 64%，与节点内 12/16 的比例一致 */
 .toolbar-icon {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 15px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   vector-effect: non-scaling-stroke;
 }
 
 .toolbar-icon--cursor {
-  width: 14px;
-  height: 14px;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
 }
 
 /* ===== Main board ===== */
