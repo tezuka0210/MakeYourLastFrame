@@ -2,6 +2,7 @@ import json
 from langchain_core.prompts import ChatPromptTemplate
 from .state import AgentState
 from .llm_config import create_chat_llm
+from .prompt_agent import _normalize_cue_list, _serialize_cues
 
 def final_prompt_agent_node(state: AgentState):
     print("--- Running Prompt Agent (Plain Text Mode) ---")
@@ -87,5 +88,20 @@ def final_prompt_agent_node(state: AgentState):
             "negative": "bad quality"
         }
 
+    # 这条路径是「用户已手工编辑过 cue，再重新生成」。
+    # 用户改过的文字不能被改写，因此结构化 cue 直接从用户输入反解，
+    # 只补上类型与权重，不动 text 本身。
+    incoming_cues = state.get("positive_cues")
+    final_prompts["positive_cues"] = _normalize_cue_list(incoming_cues, user_input)
+    final_prompts["negative_cues"] = _normalize_cue_list(
+        state.get("negative_cues"),
+        state.get("negative_prompt", "")
+    )
+    if final_prompts["positive_cues"]:
+        final_prompts["positive"] = _serialize_cues(final_prompts["positive_cues"])
+    if final_prompts["negative_cues"]:
+        final_prompts["negative"] = _serialize_cues(final_prompts["negative_cues"])
+
     print(f"AGENCY: Final Prompt Output: {final_prompts['positive']}")
+    print(f"AGENCY: Preserved {len(final_prompts['positive_cues'])} user-edited cues")
     return {"final_prompt": final_prompts}

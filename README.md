@@ -51,7 +51,7 @@ MakeYourLastFrame provides a suite of interactive tools designed to transform th
 
 ## 📦 Getting Started
 Prerequisites
-- Python 3.10+
+- Python 3.10.14 (the project-level `.python-version` lets pyenv select it automatically)
 - Node.js 18+
 - NVIDIA GPU 
 Installation
@@ -63,8 +63,8 @@ cd MakeYourLastFrame
 2. Backend Setup
 ```
 cd backend
-pip install -r requirements.txt
-python main.py
+python -m pip install -r requirements.txt
+python app.py
 ```
 3. Frontend Setup
 ```

@@ -52,6 +52,7 @@ export function initCanvasDrag() {
   let droppedImages = [];
   let draggingImg = null;
   let currentSelectedItem = null;
+  let highlightedItemIds = new Set();
   let layerMenu = null;
   let layerMenuTarget = null;
   let layerSeed = 0;
@@ -792,26 +793,62 @@ export function initCanvasDrag() {
     return { x, y };
   }
 
+  function normalizeCanvasLabel(value) {
+    return String(value || '').normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/g, ' ');
+  }
+
+  function refreshItemEmphasis(item) {
+    if (!item?.element) return;
+    const highlighted = highlightedItemIds.has(item.id);
+    const selected = currentSelectedItem === item;
+
+    item.element.style.outline = highlighted
+      ? '3px solid #f59e0b'
+      : (selected ? '2px solid rgba(71, 85, 105, 0.45)' : 'none');
+    item.element.style.outlineOffset = highlighted ? '3px' : '0';
+    item.element.style.filter = highlighted ? 'drop-shadow(0 0 7px rgba(245, 158, 11, 0.6))' : 'none';
+
+    if (item.labelEl) {
+      item.labelEl.style.borderColor = highlighted ? '#f59e0b' : 'rgba(100,116,139,0.28)';
+      item.labelEl.style.background = highlighted ? 'rgba(255,247,237,0.98)' : 'rgba(255,255,255,0.92)';
+      item.labelEl.style.boxShadow = highlighted
+        ? '0 0 0 2px rgba(245,158,11,0.28), 0 3px 10px rgba(245,158,11,0.2)'
+        : (selected ? '0 0 0 2px rgba(71, 85, 105, 0.15)' : '0 1px 3px rgba(0,0,0,0.08)');
+    }
+  }
+
+  function refreshAllItemEmphasis() {
+    droppedImages.forEach(refreshItemEmphasis);
+  }
+
+  function highlightByLabels(labels = []) {
+    const requestedLabels = new Set(
+      (Array.isArray(labels) ? labels : [labels])
+        .map(normalizeCanvasLabel)
+        .filter(Boolean)
+    );
+    highlightedItemIds = new Set(
+      droppedImages
+        .filter(item => requestedLabels.has(normalizeCanvasLabel(item.label)))
+        .map(item => item.id)
+    );
+    refreshAllItemEmphasis();
+  }
+
+  function clearHighlight() {
+    if (!highlightedItemIds.size) return;
+    highlightedItemIds.clear();
+    refreshAllItemEmphasis();
+  }
+
   function selectItem(item) {
     currentSelectedItem = item;
-    droppedImages.forEach(it => {
-      it.element.style.outline = it === item ? '2px solid rgba(71, 85, 105, 0.45)' : 'none';
-      if (it.labelEl) {
-        it.labelEl.style.boxShadow = it === item
-          ? '0 0 0 2px rgba(71, 85, 105, 0.15)'
-          : '0 1px 3px rgba(0,0,0,0.08)';
-      }
-    });
+    refreshAllItemEmphasis();
   }
 
   function clearSelection() {
     currentSelectedItem = null;
-    droppedImages.forEach(it => {
-      it.element.style.outline = 'none';
-      if (it.labelEl) {
-        it.labelEl.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
-      }
-    });
+    refreshAllItemEmphasis();
   }
 
   function updateLabelPosition(item) {
@@ -864,6 +901,7 @@ export function initCanvasDrag() {
 
     item.labelEl.textContent = next;
     updateLabelPosition(item);
+    refreshItemEmphasis(item);
   }
 
   function normalizeHexColor(hex) {
@@ -1637,6 +1675,7 @@ export function initCanvasDrag() {
     if (item.element) item.element.remove();
 
     droppedImages = droppedImages.filter(it => it !== item);
+    highlightedItemIds.delete(item.id);
 
     if (currentSelectedItem === item) {
       currentSelectedItem = null;
@@ -2733,6 +2772,7 @@ export function initCanvasDrag() {
       });
 
       droppedImages = [];
+      highlightedItemIds.clear();
       srCache.clear();
       layerSeed = 0;
       clearSelection();
@@ -3300,6 +3340,7 @@ export function initCanvasDrag() {
   initMaskCanvas();
   initTools();
   bindEvents();
+  window.__canvasAPI = { highlightByLabels, clearHighlight };
   syncBoardContentState();
   refreshRegionStyles();
   updateToolbarColorIndicators();

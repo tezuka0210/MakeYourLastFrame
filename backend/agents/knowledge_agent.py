@@ -6,18 +6,26 @@ def knowledge_agent_node(state: AgentState):
     print("--- Running Knowledge Agent (Internal Brain) ---")
 
     # 1. 获取数据
-    entities = state.get("entities", [])
+    entities = state.get("entities", []) or []
+    attributes = state.get("attributes", []) or []
+    relations = state.get("relations", []) or []
     style = state.get("style", "")
     user_input = state.get("user_input", "") # 多拿一个原始输入作为备用
 
     # 2. 调试打印：看看 Master Agent 到底传了什么过来
-    print(f"DEBUG: Master传来的 Style: '{style}' | Entities: {entities}")
+    print(f"DEBUG: Master传来的 Style: '{style}' | Entities: {entities} | Relations: {relations}")
 
     # 3. 兜底逻辑：如果 Master 没提取出东西，就用原始 User Input
     # 这样保证 Knowledge Agent 永远有活干
     target_info = ""
-    if entities or style:
-        target_info = f"Entities: {', '.join(entities)}\nStyle: {style}"
+    if entities or style or relations:
+        parts = [f"Entities: {', '.join(entities)}", f"Style: {style}"]
+        if attributes:
+            parts.append(f"Attributes: {', '.join(attributes)}")
+        if relations:
+            # 关系单列一行，避免被当成又一组形容词
+            parts.append(f"Spatial/logical relations between entities: {', '.join(relations)}")
+        target_info = "\n".join(parts)
     else:
         print("⚠️ Master没提取到有效信息，使用原始输入兜底...")
         target_info = f"User Context: {user_input}"

@@ -8,7 +8,9 @@ class AgentState(TypedDict):
 
     # --- Master Agent Outputs ---
     intent: str
-    entities: List[str]
+    entities: List[str]        # Primary subjects / objects
+    attributes: List[str]      # Traits bound to a single entity (color, material, texture)
+    relations: List[str]       # Spatial or logical links BETWEEN entities
     style: str
     image_caption: str         # Description of the uploaded image
 

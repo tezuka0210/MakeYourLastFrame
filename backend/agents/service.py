@@ -18,7 +18,8 @@ def run_agent_pipeline(user_input: str, image_data: str = None, parent_workflow:
         "parent_workflow": parent_workflow,
         "workflow_list": get_all_workflow_names(),
         # 预设空值防止报错
-        "intent": "", "entities": [], "style": "", "knowledge_context": "",
+        "intent": "", "entities": [], "attributes": [], "relations": [],
+        "style": "", "knowledge_context": "",
         "selected_workflow": "", "workflow_title": "", "final_prompt": {}
     }
 
@@ -36,6 +37,12 @@ def run_agent_pipeline(user_input: str, image_data: str = None, parent_workflow:
             "intent": state["intent"],
             "style": state["style"],
             "knowledge": state["knowledge_context"],
+            # 语义分解：前端据此把 cue 按类型分组显示，并记录各类型的编辑行为
+            "semantic_cues": {
+                "entities": state.get("entities", []),
+                "attributes": state.get("attributes", []),
+                "relations": state.get("relations", [])
+            },
             "recommendation": {
                 "workflow_file": state["selected_workflow"],
                 "card_title": state["workflow_title"]

@@ -6,7 +6,7 @@ import WaveSurfer from 'wavesurfer.js'
 import { workflowParameters } from '@/lib/useWorkflowForm.js';
 import { setPrevAgentContext, clearPrevAgentContext } from '@/lib/agentSharedState.js';
 import { updateEntityDisplay } from '@/lib/entityCard.js';
-import { exportSpeechTimingRecordsCsv, isSpeechInputSupported, startBrowserSpeechInput } from '@/lib/speechInput.js';
+import { isSpeechInputSupported, startBrowserSpeechInput } from '@/lib/speechInput.js';
 
 
 // --- link color: light gray for all edges ---
@@ -1268,7 +1268,9 @@ export function renderTree(
     return {
       note: p.text || p.prompt_note || p.global_context || '',
       positive: p.positive_prompt || '',
-      negative: p.negative_prompt || ''
+      negative: p.negative_prompt || '',
+      positiveCues: Array.isArray(p.positive_cues) ? p.positive_cues : null,
+      negativeCues: Array.isArray(p.negative_cues) ? p.negative_cues : null
     }
   }
 
@@ -1285,6 +1287,8 @@ export function renderTree(
     node.parameters.prompt_note = next.note || ''
     node.parameters.positive_prompt = next.positive || ''
     node.parameters.negative_prompt = next.negative || ''
+    node.parameters.positive_cues = Array.isArray(next.positiveCues) ? next.positiveCues : []
+    node.parameters.negative_cues = Array.isArray(next.negativeCues) ? next.negativeCues : []
     emit('update-node-parameters', node.id, node.parameters)
   }
 
@@ -1305,22 +1309,72 @@ export function renderTree(
     return input
   }
 
-  function buildTinyButton(parent, text, title, onClick) {
-    return parent.append('xhtml:button')
+  // 三档尺寸：
+  //   xs  行内的 +/× —— 保持原来的 18px，不占地方
+  //   sm  麦克风 —— 比主操作略小
+  //   md  A / 重新生成等主操作
+  const TINY_BUTTON_SIZES = {
+    xs: { size: '18px', padding: '0 6px', font: '10px' },
+    sm: { size: '22px', padding: '0 7px', font: '11px' },
+    md: { size: '24px', padding: '0 9px', font: '12px' }
+  }
+
+  // 语义配色：默认灰、主操作蓝、危险红。hover 时整块反显。
+  const TINY_BUTTON_TONES = {
+    default: { border: '#d1d5db', color: '#4b5563', hoverBg: '#4b5563', hoverBorder: '#4b5563' },
+    primary: { border: '#bfdbfe', color: '#2563eb', hoverBg: '#2563eb', hoverBorder: '#2563eb' },
+    danger:  { border: '#fecaca', color: '#dc2626', hoverBg: '#dc2626', hoverBorder: '#dc2626' }
+  }
+
+  function buildTinyButton(parent, text, title, onClick, options = {}) {
+    const { size = 'xs', tone = 'default' } = options
+    const dim = TINY_BUTTON_SIZES[size] || TINY_BUTTON_SIZES.xs
+    const palette = TINY_BUTTON_TONES[tone] || TINY_BUTTON_TONES.default
+    // 只放图标或单字符时强制正圆：左右内边距会把宽度撑开，变成椭圆。
+    const circle = options.circle !== undefined
+      ? options.circle
+      : String(text || '').length <= 1
+
+    const button = parent.append('xhtml:button')
       .text(text)
       .attr('title', title || '')
-      .style('height', '18px')
-      .style('min-width', '18px')
-      .style('padding', '0 6px')
+      .style('height', dim.size)
+      .style('width', circle ? dim.size : null)
+      .style('min-width', dim.size)
+      .style('padding', circle ? '0' : dim.padding)
+      .style('flex-shrink', '0')
+      .style('box-sizing', 'border-box')
+      .style('display', 'inline-flex')
+      .style('align-items', 'center')
+      .style('justify-content', 'center')
       .style('border-radius', '999px')
-      .style('border', '1px solid #d1d5db')
+      .style('border', `1px solid ${palette.border}`)
       .style('background', '#ffffff')
-      .style('color', '#4b5563')
-      .style('font-size', '10px')
+      .style('color', palette.color)
+      .style('font-size', dim.font)
       .style('line-height', '1')
       .style('cursor', 'pointer')
+      .style('transition', 'background 0.14s ease, color 0.14s ease, border-color 0.14s ease')
       .on('mousedown', ev => ev.stopPropagation())
       .on('click', function (ev) { ev.stopPropagation(); if (onClick) onClick(ev) })
+
+    // hover 反显：底色填充、文字转白。disabled 时不反显。
+    button
+      .on('mouseenter.tone', function () {
+        if (this.disabled) return
+        d3.select(this)
+          .style('background', palette.hoverBg)
+          .style('color', '#ffffff')
+          .style('border-color', palette.hoverBorder)
+      })
+      .on('mouseleave.tone', function () {
+        d3.select(this)
+          .style('background', '#ffffff')
+          .style('color', palette.color)
+          .style('border-color', palette.border)
+      })
+
+    return button
   }
 
   function appendMediaPreview(parent, url, type) {
@@ -1714,7 +1768,7 @@ function addMediaBoxResizeHandle(box, boxState) {
     })
     select.on('change', function () {
       const workflowId = this.value
-      const nextParams = { ...getDefaultWorkflowParams(workflowId), text: node.parameters?.text || node.parameters?.prompt_note || '', prompt_note: node.parameters?.prompt_note || node.parameters?.text || '', positive_prompt: node.parameters?.positive_prompt || '', negative_prompt: node.parameters?.negative_prompt || '' }
+      const nextParams = { ...getDefaultWorkflowParams(workflowId), text: node.parameters?.text || node.parameters?.prompt_note || '', prompt_note: node.parameters?.prompt_note || node.parameters?.text || '', positive_prompt: node.parameters?.positive_prompt || '', negative_prompt: node.parameters?.negative_prompt || '', positive_cues: node.parameters?.positive_cues || [], negative_cues: node.parameters?.negative_cues || [] }
       node.parameters = nextParams
       emit('refresh-node', node.id, workflowId, nextParams, workflowId)
     })
@@ -1723,51 +1777,238 @@ function addMediaBoxResizeHandle(box, boxState) {
 
   function buildPromptSection(parent, node, emit, inputMediaResolver = null) {
     const promptState = extractPromptState(node)
+    const CUE_SEP = ' | '
+    const cueTypes = ['relation', 'entity', 'attribute']
+    const cueBaseColor = getNodeBorderColor(node) || '#94a3b8'
+    const CUE_COLOR_OPACITY = 0.6
+    const cuePalette = deriveCuePalette(cueBaseColor)
+    const CUE_ROW_RADIUS = '8px'
+    const CUE_INPUT_RADIUS = '6px'
+    const CUE_INPUT_HEIGHT = '22px'
+    const CUE_ROW_PADDING = '3px 4px 3px 7px'
 
-    function parseCueString(prompt) {
-      if (!prompt) return []
-      const trimmed = String(prompt).trim()
-      if (!trimmed) return []
-      const noBrackets = trimmed.replace(/[()]/g, '')
-      return noBrackets
-        .split(',')
-        .map(item => item.trim())
-        .filter(Boolean)
-        .map(item => {
-          if (item.includes(':')) {
-            const idx = item.lastIndexOf(':')
-            const text = item.slice(0, idx).trim()
-            const weight = parseFloat(item.slice(idx + 1).trim())
-            return { text, weight: Number.isFinite(weight) ? weight : 1.0 }
-          }
-          return { text: item, weight: 1.0 }
-        })
-        .filter(p => p.text)
+    function clampColorValue(value, min, max) {
+      return Math.max(min, Math.min(max, value))
+    }
+
+    function resolveRgbColor(cssColor) {
+      const probe = document.createElement('span')
+      probe.style.display = 'none'
+      probe.style.color = cssColor
+      document.body.appendChild(probe)
+      const resolved = getComputedStyle(probe).color
+      probe.remove()
+
+      const channels = resolved.match(/[\d.]+/g)?.slice(0, 3).map(Number)
+      if (!channels || channels.length < 3 || channels.some(value => !Number.isFinite(value))) {
+        return { r: 148, g: 163, b: 184 }
+      }
+      return { r: channels[0], g: channels[1], b: channels[2] }
+    }
+
+    function rgbToHsl({ r, g, b }) {
+      const red = r / 255
+      const green = g / 255
+      const blue = b / 255
+      const max = Math.max(red, green, blue)
+      const min = Math.min(red, green, blue)
+      const delta = max - min
+      const lightness = (max + min) / 2
+      let hue = 0
+      let saturation = 0
+
+      if (delta) {
+        saturation = delta / (1 - Math.abs(2 * lightness - 1))
+        if (max === red) hue = 60 * (((green - blue) / delta) % 6)
+        else if (max === green) hue = 60 * ((blue - red) / delta + 2)
+        else hue = 60 * ((red - green) / delta + 4)
+      }
+
+      return {
+        h: (hue + 360) % 360,
+        s: saturation * 100,
+        l: lightness * 100
+      }
+    }
+
+    function hslColor(hue, saturation, lightness, alpha = 1) {
+      const normalizedHue = (hue + 360) % 360
+      const color = `hsl(${normalizedHue.toFixed(1)} ${clampColorValue(saturation, 0, 100).toFixed(1)}% ${clampColorValue(lightness, 0, 100).toFixed(1)}%`
+      return alpha < 1 ? `${color} / ${alpha})` : `${color})`
+    }
+
+    function cueColorWithOpacity(cssColor, opacity = CUE_COLOR_OPACITY) {
+      const percentage = clampColorValue(opacity, 0, 1) * 100
+      return `color-mix(in srgb, ${cssColor} ${percentage}%, transparent)`
+    }
+
+    function deriveCuePalette(cssColor) {
+      const base = rgbToHsl(resolveRgbColor(cssColor))
+      const saturation = base.s < 8 ? 0 : clampColorValue(base.s, 32, 78)
+      const accentLightness = clampColorValue(base.l, 36, 62)
+
+      return {
+        relation: {
+          color: hslColor(base.h - 14, saturation, accentLightness, CUE_COLOR_OPACITY),
+          tint: hslColor(base.h - 14, saturation * 0.68, 90, CUE_COLOR_OPACITY),
+          hover: hslColor(base.h - 14, saturation, accentLightness, 0.3 * CUE_COLOR_OPACITY)
+        },
+        entity: {
+          color: hslColor(base.h, saturation * 0.86, accentLightness + 5, CUE_COLOR_OPACITY),
+          tint: hslColor(base.h, saturation * 0.56, 94, CUE_COLOR_OPACITY),
+          hover: hslColor(base.h, saturation * 0.86, accentLightness + 5, 0.25 * CUE_COLOR_OPACITY)
+        },
+        attribute: {
+          color: hslColor(base.h + 14, saturation * 0.72, accentLightness + 9, CUE_COLOR_OPACITY),
+          tint: hslColor(base.h + 14, saturation * 0.48, 97, CUE_COLOR_OPACITY),
+          hover: hslColor(base.h + 14, saturation * 0.72, accentLightness + 9, 0.2 * CUE_COLOR_OPACITY)
+        }
+      }
+    }
+
+    function normalizeForMatch(value) {
+      return String(value || '').normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/g, ' ')
+    }
+
+    function inferCueType(text, semanticCues = null) {
+      const normalized = normalizeForMatch(text)
+      const semanticGroups = [
+        ['relation', semanticCues?.relations],
+        ['entity', semanticCues?.entities],
+        ['attribute', semanticCues?.attributes]
+      ]
+      for (const [type, values] of semanticGroups) {
+        if ((values || []).some(value => normalizeForMatch(value) === normalized)) return type
+      }
+
+      const relationHints = /\b(in front of|behind|beside|between|inside|outside|above|below|under|over|next to|near|far from|holding|looking|facing|connected|attached|through|toward|around|across|following|leading|contains|wearing|carrying|placed|standing|sitting|camera|viewpoint)\b/i
+      if (relationHints.test(String(text || ''))) return 'relation'
+      return normalized.split(' ').filter(Boolean).length <= 2 ? 'entity' : 'attribute'
+    }
+
+    function normalizeCue(item, semanticCues = null) {
+      const source = item && typeof item === 'object' ? item : { text: item }
+      const text = String(source.text || '').trim()
+      if (!text) return null
+      const parsedWeight = Number.parseFloat(source.weight)
+      const sourceType = String(source.type || '').trim().toLocaleLowerCase()
+      const type = cueTypes.includes(sourceType) ? sourceType : inferCueType(text, semanticCues)
+      return {
+        ...source,
+        text,
+        weight: Number.isFinite(parsedWeight) ? parsedWeight : 1.0,
+        type
+      }
+    }
+
+    function parseOneCue(rawCue, semanticCues = null) {
+      let body = String(rawCue || '').trim()
+      body = body.replace(/^\(\s*/, '').replace(/\s*\)$/, '').trim()
+      if (!body) return null
+
+      let weight = 1.0
+      const idx = body.lastIndexOf(':')
+      if (idx >= 0) {
+        const possibleWeight = body.slice(idx + 1).trim()
+        if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(possibleWeight)) {
+          weight = Number.parseFloat(possibleWeight)
+          body = body.slice(0, idx).trim()
+        }
+      }
+      return normalizeCue({ text: body, weight }, semanticCues)
+    }
+
+    function parseCueString(structuredCues, fallbackPrompt = '', semanticCues = null) {
+      // 新数据优先使用结构化 cue；字符串解析只服务历史记录与旧后端。
+      if (Array.isArray(structuredCues) && structuredCues.length) {
+        return structuredCues.map(item => normalizeCue(item, semanticCues)).filter(Boolean)
+      }
+
+      const raw = String(fallbackPrompt || '').trim()
+      if (!raw) return []
+      let chunks
+      if (raw.includes(CUE_SEP)) {
+        chunks = raw.split(CUE_SEP)
+      } else if (/\)\s*,\s*\(/.test(raw)) {
+        chunks = raw.split(/\)\s*,\s*\(/)
+      } else if (raw.startsWith('(') && raw.endsWith(')')) {
+        chunks = [raw]
+      } else {
+        // 最后兼容无括号的旧逗号格式；这种格式本身无法区分 cue 内部逗号。
+        chunks = raw.split(',')
+      }
+      return chunks.map(item => parseOneCue(item, semanticCues)).filter(Boolean)
+    }
+
+    function fmtWeight(weight) {
+      const value = Number.parseFloat(weight)
+      return (Number.isFinite(value) ? value : 1.0).toFixed(1)
     }
 
     function serializeCueList(list) {
       return (list || [])
         .filter(item => item && String(item.text || '').trim())
-        .map(item => `${String(item.text).trim()}:${Number.isFinite(item.weight) ? item.weight.toFixed(1) : '1.0'}`)
-        .join(', ')
+        .map(item => `(${String(item.text).trim()}:${fmtWeight(item.weight)})`)
+        .join(CUE_SEP)
+    }
+
+    function sortCueEntries(list, type = null) {
+      return (list || [])
+        .map((phrase, index) => ({ phrase, index }))
+        .filter(({ phrase }) => !type || phrase.type === type)
+        .sort((a, b) => {
+          const aWeight = Number.isFinite(Number.parseFloat(a.phrase.weight)) ? Number.parseFloat(a.phrase.weight) : 1.0
+          const bWeight = Number.isFinite(Number.parseFloat(b.phrase.weight)) ? Number.parseFloat(b.phrase.weight) : 1.0
+          return bWeight - aWeight || a.index - b.index
+        })
     }
 
     let noteArea
     let noteAreaWrap
     let showPromptInput = shouldShowPromptInput(node)
-    let positivePhrases = parseCueString(promptState.positive || promptState.note)
-    let negativePhrases = parseCueString(promptState.negative)
+    let positivePhrases = parseCueString(promptState.positiveCues, promptState.positive || promptState.note)
+    let negativePhrases = parseCueString(promptState.negativeCues, promptState.negative)
     let positiveContainer, negativeContainer, positiveCount, negativeCount
+    const collapsedCueGroups = { relation: false, entity: false, attribute: false }
     let speechSession = null
     let speechButton = null
     let speechListening = false
     let speechPolishing = false
+    // 三个控件共用一套图标规格：按钮外形一致，靠图标本身区分。
+    const ICON_SIZE = 12
+    const iconWrap = body => `
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="${ICON_SIZE}" height="${ICON_SIZE}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+
+    const microphoneIcon = iconWrap(`
+        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+        <path d="M5 10a7 7 0 0 0 14 0"></path>
+        <path d="M12 17v5"></path>
+        <path d="M8 22h8"></path>`)
+
+    // 机器人：方头 + 天线 + 两只眼睛，替代原来的字母 A
+    const agentIcon = iconWrap(`
+        <rect x="4" y="8" width="16" height="12" rx="3"></rect>
+        <path d="M12 8V4"></path>
+        <circle cx="12" cy="3" r="1.2"></circle>
+        <path d="M2 13v3"></path>
+        <path d="M22 13v3"></path>
+        <circle cx="9" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>
+        <circle cx="15" cy="14" r="1.15" fill="currentColor" stroke="none"></circle>`)
+
+    // 重新生成：两段首尾相接的弧线各带一个箭头，比单个 ↻ 更能读出「再跑一次」
+    const regenerateIcon = iconWrap(`
+        <path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"></path>
+        <path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"></path>
+        <polyline points="18 2.5 18 6 14.5 6"></polyline>
+        <polyline points="6 21.5 6 18 9.5 18"></polyline>`)
 
     function syncPromptStateFromUI() {
       const next = {
         note: noteArea ? (noteArea.property('value') || '') : '',
         positive: serializeCueList(positivePhrases),
-        negative: serializeCueList(negativePhrases)
+        negative: serializeCueList(negativePhrases),
+        positiveCues: positivePhrases.map(item => ({ ...item })),
+        negativeCues: negativePhrases.map(item => ({ ...item }))
       }
       syncPromptState(node, next, emit)
       return next
@@ -1775,12 +2016,23 @@ function addMediaBoxResizeHandle(box, boxState) {
 
     function updateSpeechButton() {
       if (!speechButton) return
+      const supported = isSpeechInputSupported()
+      const title = !supported
+        ? 'Speech input is not supported in this browser'
+        : (speechPolishing ? 'Polishing speech text' : (speechListening ? 'Stop speech input' : 'Start speech input'))
       speechButton
-        .text(speechPolishing ? '...' : (speechListening ? 'Stop' : 'Mic'))
-        .attr('title', !isSpeechInputSupported()
-          ? 'Speech input is not supported in this browser'
-          : (speechPolishing ? 'Polishing speech text' : (speechListening ? 'Stop speech input' : 'Start speech input')))
-        .style('opacity', speechPolishing ? '0.65' : '1')
+        .html(speechPolishing ? `<span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:${ICON_SIZE}px;height:${ICON_SIZE}px;font-size:${ICON_SIZE}px;line-height:1">…</span>` : microphoneIcon)
+        .attr('title', title)
+        .attr('aria-label', title)
+        .attr('aria-pressed', speechListening ? 'true' : 'false')
+        .style('display', 'inline-flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
+        .style('width', '22px')
+        .style('padding', '0')
+        .style('color', speechListening ? '#b45353' : '#4b5563')
+        .style('background', speechListening ? '#fdf2f2' : '#ffffff')
+        .style('opacity', !supported || speechPolishing ? '0.55' : '1')
     }
 
     function stopSpeechInput() {
@@ -1829,77 +2081,389 @@ function addMediaBoxResizeHandle(box, boxState) {
       }
     }
 
-    function buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind) {
-      container.selectAll('*').remove()
-      const list = listRefGetter()
-      countSel.text(`(${list.length})`)
+    function cueMentionsLabel(cueText, label) {
+      const cue = normalizeForMatch(cueText)
+      const target = normalizeForMatch(label)
+      if (!cue || !target) return false
+      if (/[^\u0000-\u00ff]/.test(target)) return cue.includes(target)
+      const toWords = value => value.replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim()
+      return ` ${toWords(cue)} `.includes(` ${toWords(target)} `)
+    }
 
-      if (!list.length) {
-        container.append('xhtml:div')
+    function highlightCueOnCanvas(cueText) {
+      const api = window.__canvasAPI
+      if (!api?.highlightByLabels) return
+      const labels = [...document.querySelectorAll('.canvas-image-label')]
+        .map(element => element.textContent?.trim())
+        .filter(label => label && cueMentionsLabel(cueText, label))
+      api.highlightByLabels(labels)
+    }
+
+    function attachCueHover(selection, phrase) {
+      selection
+        .on('mouseenter', () => highlightCueOnCanvas(phrase.text))
+        .on('mouseleave', () => window.__canvasAPI?.clearHighlight?.())
+    }
+
+    // --- cue 拖拽排序 ---
+    // 权重不显示也不可直接编辑，但它决定渲染顺序，也是模型实际吃到的值。
+    // 因此拖拽改变顺序后，按新的视觉次序在 [1.0, 1.5] 区间内重新均匀分配权重，
+    // 使「看到的顺序」与「模型收到的权重」始终一致。
+    function roundWeight(value) {
+      // 生成模型只接受一位小数
+      const parsed = Number.parseFloat(value)
+      return Math.round((Number.isFinite(parsed) ? parsed : 1.0) * 10) / 10
+    }
+
+    // 拖拽不产生新的权重值，只把这一组已有的权重按新位置重新落座。
+    // 模型给的档位（可能是 1.6 / 1.45 / 0.9，不限于某个区间）因此被完整保留，
+    // 变化的只是哪一条 cue 拿到哪一档。
+    function reassignWeightsByPosition(weights) {
+      return [...weights]
+        .map(roundWeight)
+        .sort((a, b) => b - a)
+    }
+
+    // 拖拽状态：记录被拖的那条在扁平数组里的下标，以及它属于哪个类型组。
+    // 只允许组内排序 —— 跨组拖动等于改变 cue 的语义类型，那是另一回事。
+    let cueDragState = null
+
+    function reorderPositiveCues(type, fromIndex, toIndex, placeAfter) {
+      if (fromIndex === toIndex) return
+
+      // 该组当前的视觉顺序（sortCueEntries 已按权重降序）
+      const groupIndices = sortCueEntries(positivePhrases, type).map(e => e.index)
+      const from = groupIndices.indexOf(fromIndex)
+      let to = groupIndices.indexOf(toIndex)
+      if (from === -1 || to === -1) return
+
+      const reordered = [...groupIndices]
+      reordered.splice(from, 1)
+      if (from < to) to -= 1
+      reordered.splice(placeAfter ? to + 1 : to, 0, fromIndex)
+
+      // 取这一组原有的权重，降序排好，再按新位置逐个落座
+      const weights = reassignWeightsByPosition(
+        groupIndices.map(flatIndex => positivePhrases[flatIndex]?.weight)
+      )
+      const updated = reordered.map((flatIndex, position) => ({
+        ...positivePhrases[flatIndex],
+        weight: weights[position]
+      }))
+
+      // 同时把扁平数组里该组成员的物理次序也改成新次序。
+      // 一位小数只有 6 个档位，超过 6 条时权重会重复；
+      // sortCueEntries 的并列兜底是数组下标，所以物理次序必须跟着变，
+      // 否则重新渲染时并列的几条会跳回原来的相对位置。
+      const slotQueue = [...groupIndices].sort((a, b) => a - b)
+      const next = [...positivePhrases]
+      slotQueue.forEach((slot, i) => { next[slot] = updated[i] })
+      positivePhrases = next
+
+      renderAllCueEditors()
+      syncPromptStateFromUI()
+    }
+
+    function attachCueDrag(row, handle, entry, config) {
+      const { index } = entry
+
+      handle
+        .attr('draggable', 'true')
+        .style('cursor', 'grab')
+        .on('mousedown', ev => ev.stopPropagation())
+        .on('dragstart', function (ev) {
+          cueDragState = { index, type: config.type }
+          this.style.cursor = 'grabbing'
+          row.style('opacity', '0.45')
+          try {
+            ev.dataTransfer.effectAllowed = 'move'
+            // Firefox 要求写入数据才会触发 drag 事件
+            ev.dataTransfer.setData('text/plain', String(index))
+          } catch (_) { /* 某些环境不允许写 dataTransfer，忽略 */ }
+        })
+        .on('dragend', function () {
+          cueDragState = null
+          this.style.cursor = 'grab'
+          row.style('opacity', '1')
+          row.style('border-top', '').style('border-bottom', '')
+        })
+
+      const clearDropHint = () => row.style('box-shadow', 'none')
+
+      row
+        .on('dragover', function (ev) {
+          if (!cueDragState || cueDragState.type !== config.type) return
+          if (cueDragState.index === index) return
+          ev.preventDefault()
+          ev.dataTransfer.dropEffect = 'move'
+          // 用上/下阴影提示会落在这一条的前面还是后面
+          const rect = this.getBoundingClientRect()
+          const after = (ev.clientY - rect.top) > rect.height / 2
+          row.style('box-shadow', after
+            ? `inset 0 -2px 0 0 ${config.color}`
+            : `inset 0 2px 0 0 ${config.color}`)
+        })
+        .on('dragleave', clearDropHint)
+        .on('drop', function (ev) {
+          if (!cueDragState || cueDragState.type !== config.type) return
+          ev.preventDefault()
+          ev.stopPropagation()
+          clearDropHint()
+          const rect = this.getBoundingClientRect()
+          const after = (ev.clientY - rect.top) > rect.height / 2
+          reorderPositiveCues(config.type, cueDragState.index, index, after)
+          cueDragState = null
+        })
+    }
+
+    function updatePositiveCue(index, patch) {
+      positivePhrases = positivePhrases.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)
+      syncPromptStateFromUI()
+    }
+
+    function addPositiveCue(type, afterIndex = null) {
+      const next = [...positivePhrases]
+      const insertAt = Number.isInteger(afterIndex) ? afterIndex + 1 : next.length
+      next.splice(insertAt, 0, { text: '', weight: 1.0, type })
+      positivePhrases = next
+      renderAllCueEditors()
+      syncPromptStateFromUI()
+    }
+
+    function deletePositiveCue(index) {
+      positivePhrases = positivePhrases.filter((_, itemIndex) => itemIndex !== index)
+      renderAllCueEditors()
+      syncPromptStateFromUI()
+    }
+
+    function renderPositiveCue(parent, entry, config) {
+      const { phrase, index } = entry
+      const row = parent.append('xhtml:div')
+        .style('display', 'grid')
+        .style('grid-template-columns', '10px minmax(0, 1fr) 18px 18px')
+        .style('align-items', 'center')
+        .style('gap', '4px')
+        .style('width', '100%')
+        .style('box-sizing', 'border-box')
+        .style('margin', '0 0 4px')
+        .style('padding', '3px 4px 3px 3px')
+        .style('border-radius', CUE_ROW_RADIUS)
+        .style('border-left', `2px solid ${config.color}`)
+        .style('background', config.tint)
+        .style('transition', 'box-shadow 0.14s ease, background 0.14s ease')
+
+      attachCueHover(row, phrase)
+
+      // 拖拽把手。只有它可拖，输入框仍可正常选中文字。
+      const handle = row.append('xhtml:div')
+        .attr('title', '拖动调整顺序（顺序即权重）')
+        .style('width', '10px')
+        .style('height', CUE_INPUT_HEIGHT)
+        .style('display', 'flex')
+        .style('align-items', 'center')
+        .style('justify-content', 'center')
+        .style('font-size', '9px')
+        .style('line-height', '1')
+        .style('letter-spacing', '-1px')
+        .style('color', config.color)
+        .style('opacity', '0.8')
+        .style('user-select', 'none')
+        .style('flex-shrink', '0')
+        .text('⋮⋮')
+
+      row.on('mouseenter.cueHandle', () => handle.style('opacity', '1'))
+      row.on('mouseleave.cueHandle', () => handle.style('opacity', '0.8'))
+
+      attachCueDrag(row, handle, entry, config)
+      row
+        .on('mouseenter.cueRowStyle', function () { this.style.boxShadow = `0 0 0 1px ${config.hover}` })
+        .on('mouseleave.cueRowStyle', function () { this.style.boxShadow = 'none' })
+
+      const input = row.append('xhtml:input')
+        .attr('type', 'text')
+        .attr('value', phrase.text || '')
+        .attr('class', 'phrase-input phrase-input-wide')
+        .style('width', '100%')
+        .style('min-width', '0')
+        .style('height', CUE_INPUT_HEIGHT)
+        .style('border', 'none')
+        .style('border-radius', CUE_INPUT_RADIUS)
+        .style('padding', '0 5px')
+        .style('font-size', '10px')
+        .style('color', '#3f4752')
+        .style('background', 'transparent')
+        .style('outline', 'none')
+        .style('--cue-focus-color', cueColorWithOpacity(cueBaseColor))
+        .style('--cue-focus-ring', cueColorWithOpacity(cueBaseColor, 0.24 * CUE_COLOR_OPACITY))
+        .style('--cue-selection-color', cueColorWithOpacity(cueBaseColor, 0.32 * CUE_COLOR_OPACITY))
+        .style('caret-color', cueColorWithOpacity(cueBaseColor))
+        .on('mousedown', ev => ev.stopPropagation())
+        .on('input', function () {
+          phrase.text = this.value
+          updatePositiveCue(index, { text: this.value })
+        })
+
+      buildTinyButton(row, '+', `Add ${config.label.toLowerCase()} cue below`, () => addPositiveCue(config.type, index))
+        .style('justify-self', 'end')
+      buildTinyButton(row, '×', `Delete ${config.label.toLowerCase()} cue`, () => deletePositiveCue(index), { tone: 'danger' })
+        .style('justify-self', 'end')
+    }
+
+    function renderPositiveEditor() {
+      if (!positiveContainer) return
+      positiveContainer.selectAll('*').remove()
+      positiveCount.text(`(${positivePhrases.filter(item => String(item.text || '').trim()).length})`)
+
+      const configs = [
+        {
+          type: 'relation',
+          label: 'Relations',
+          ...cuePalette.relation
+        },
+        {
+          type: 'entity',
+          label: 'Entities',
+          ...cuePalette.entity
+        },
+        {
+          type: 'attribute',
+          label: 'Attributes',
+          ...cuePalette.attribute
+        }
+      ]
+
+      configs.forEach(config => {
+        const entries = sortCueEntries(positivePhrases, config.type)
+        const group = positiveContainer.append('xhtml:div')
+          .style('border-left', `3px solid ${config.color}`)
+          .style('padding-left', '5px')
+          .style('margin-bottom', '5px')
+
+        const head = group.append('xhtml:div')
+          .style('display', 'flex')
+          .style('align-items', 'center')
+          .style('gap', '4px')
+          .style('min-height', '20px')
+
+        const toggle = head.append('xhtml:button')
+          .attr('type', 'button')
+          .attr('title', `${collapsedCueGroups[config.type] ? 'Expand' : 'Collapse'} ${config.label}`)
+          .style('border', 'none')
+          .style('padding', '0')
+          .style('background', 'transparent')
           .style('font-size', '10px')
+          .style('font-weight', '600')
+          .style('color', '#4b5563')
+          .style('cursor', 'pointer')
+          .text(`${collapsedCueGroups[config.type] ? '▸' : '▾'} ${config.label} (${entries.length})`)
+
+        const body = group.append('xhtml:div')
+          .style('display', collapsedCueGroups[config.type] ? 'none' : 'block')
+          .style('padding-top', '2px')
+
+        toggle.on('click', ev => {
+          ev.stopPropagation()
+          collapsedCueGroups[config.type] = !collapsedCueGroups[config.type]
+          renderPositiveEditor()
+        })
+
+        buildTinyButton(head, '+', `Add ${config.label.toLowerCase()} cue`, () => addPositiveCue(config.type))
+          .style('margin-left', 'auto')
+
+        if (!entries.length) {
+          body.append('xhtml:div')
+            .style('font-size', '9px')
+            .style('color', '#9ca3af')
+            .style('padding', '2px 0')
+            .text(`No ${config.label.toLowerCase()} yet`)
+        } else {
+          entries.forEach(entry => renderPositiveCue(body, entry, config))
+        }
+      })
+    }
+
+    function renderNegativeEditor() {
+      if (!negativeContainer) return
+      negativeContainer.selectAll('*').remove()
+      const entries = sortCueEntries(negativePhrases)
+      negativeCount.text(`(${entries.filter(({ phrase }) => String(phrase.text || '').trim()).length})`)
+
+      if (!entries.length) {
+        negativeContainer.append('xhtml:div')
+          .style('font-size', '9px')
           .style('color', '#9ca3af')
           .style('padding', '2px 0')
-          .text(`No ${kind} cues yet`)
+          .text('No negative cues yet')
       }
 
-      list.forEach((phrase, idx) => {
-        const row = container.append('xhtml:div')
+      entries.forEach(({ phrase, index }) => {
+        const row = negativeContainer.append('xhtml:div')
           .style('display', 'grid')
-          .style('grid-template-columns', '1fr 18px 18px')
+          .style('grid-template-columns', 'minmax(0, 1fr) 18px 18px')
           .style('gap', '4px')
           .style('align-items', 'center')
+          .style('width', '100%')
+          .style('box-sizing', 'border-box')
+          .style('padding', CUE_ROW_PADDING)
+          .style('border-left', '2px solid rgba(209, 213, 219, 0.6)')
+          .style('border-radius', CUE_ROW_RADIUS)
+          .style('background', 'rgba(247, 247, 247, 0.6)')
           .style('margin-bottom', '4px')
+        attachCueHover(row, phrase)
+        row
+          .on('mouseenter.cueRowStyle', function () { this.style.boxShadow = '0 0 0 1px rgba(107, 114, 128, 0.084)' })
+          .on('mouseleave.cueRowStyle', function () { this.style.boxShadow = 'none' })
 
         row.append('xhtml:input')
           .attr('type', 'text')
           .attr('value', phrase.text || '')
           .attr('class', 'phrase-input phrase-input-wide')
-          .style('height', '24px')
-          .style('border', '1px solid #e5e7eb')
-          .style('border-radius', '6px')
-          .style('padding', '0 6px')
+          .style('width', '100%')
+          .style('min-width', '0')
+          .style('height', CUE_INPUT_HEIGHT)
+          .style('border', 'none')
+          .style('border-radius', CUE_INPUT_RADIUS)
+          .style('padding', '0 5px')
           .style('font-size', '10px')
-          .style('background', '#ffffff')
+          .style('color', '#3f4752')
+          .style('background', 'transparent')
+          .style('outline', 'none')
+          .style('--cue-focus-color', cueColorWithOpacity(cueBaseColor))
+          .style('--cue-focus-ring', cueColorWithOpacity(cueBaseColor, 0.24 * CUE_COLOR_OPACITY))
+          .style('--cue-selection-color', cueColorWithOpacity(cueBaseColor, 0.32 * CUE_COLOR_OPACITY))
+          .style('caret-color', cueColorWithOpacity(cueBaseColor))
           .on('mousedown', ev => ev.stopPropagation())
           .on('input', function () {
-            const next = [...listRefGetter()]
-            next[idx] = {
-              ...next[idx],
-              text: this.value,
-              weight: Number.isFinite(next[idx]?.weight) ? next[idx].weight : 1.0
-            }
-            listRefSetter(next)
+            phrase.text = this.value
+            negativePhrases = negativePhrases.map((item, itemIndex) => itemIndex === index ? { ...item, text: this.value } : item)
             syncPromptStateFromUI()
           })
 
-        buildTinyButton(row, '+', `Add ${kind} cue below`, () => {
-          const next = [...listRefGetter()]
-          next.splice(idx + 1, 0, { text: '', weight: 1.0 })
-          listRefSetter(next)
-          buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind)
+        buildTinyButton(row, '+', 'Add negative cue below', () => {
+          const next = [...negativePhrases]
+          next.splice(index + 1, 0, { text: '', weight: 1.0, type: 'attribute' })
+          negativePhrases = next
+          renderNegativeEditor()
           syncPromptStateFromUI()
-        })
-          .style('padding', '0')
-          .style('min-width', '18px')
-
-        buildTinyButton(row, '×', `Delete ${kind} cue`, () => {
-          const next = [...listRefGetter()]
-          next.splice(idx, 1)
-          listRefSetter(next)
-          buildPhraseEditor(container, listRefGetter, listRefSetter, countSel, kind)
+        }).style('justify-self', 'end')
+        buildTinyButton(row, '×', 'Delete negative cue', () => {
+          negativePhrases = negativePhrases.filter((_, itemIndex) => itemIndex !== index)
+          renderNegativeEditor()
           syncPromptStateFromUI()
-        })
-          .style('padding', '0')
-          .style('min-width', '18px')
+        }).style('justify-self', 'end')
       })
     }
 
-    const sec = buildCollapsibleSection(parent, 'Prompts', true, (controls) => {
-      speechButton = buildTinyButton(controls, 'Mic', 'Start speech input', toggleSpeechInput)
-      updateSpeechButton()
-      buildTinyButton(controls, 'CSV', 'Export Test Data', exportSpeechTimingRecordsCsv)
+    function renderAllCueEditors() {
+      renderPositiveEditor()
+      renderNegativeEditor()
+    }
 
-      buildTinyButton(controls, 'A', 'Agent assist', async () => {
+    const sec = buildCollapsibleSection(parent, 'Prompts', true, (controls) => {
+      speechButton = buildTinyButton(controls, '', 'Start speech input', toggleSpeechInput)
+      updateSpeechButton()
+
+      buildTinyButton(controls, '', 'Agent assist', async () => {
         try {
           clearPrevAgentContext()
 
@@ -1931,20 +2495,23 @@ function addMediaBoxResizeHandle(box, boxState) {
         const note = data.message?.text || noteArea.property('value') || ''
         noteArea.property('value', note)
 
-        positivePhrases = parseCueString(data.message?.positive || '')
-        negativePhrases = parseCueString(data.message?.negative || '')
+        positivePhrases = parseCueString(
+          data.message?.positive_cues,
+          data.message?.positive || '',
+          data.semantic_cues
+        )
+        negativePhrases = parseCueString(data.message?.negative_cues, data.message?.negative || '')
 
-        buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
-        buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
+        renderAllCueEditors()
 
         syncPromptStateFromUI()
 
         } catch (err) {
           console.error('Agent assist failed:', err)
         }
-      })
+      }).html(agentIcon)
 
-      buildTinyButton(controls, '↻', 'Generate', () => {
+      buildTinyButton(controls, '', 'Regenerate', () => {
         const next = syncPromptStateFromUI()
         const regenerated = { ...(node.parameters || {}) }
         regenerated.text = next.note
@@ -1952,7 +2519,7 @@ function addMediaBoxResizeHandle(box, boxState) {
         regenerated.positive_prompt = next.positive
         regenerated.negative_prompt = next.negative
         emit('regenerate-node', node.id, node.module_id, regenerated)
-      })
+      }).html(regenerateIcon)
 
       
     })
@@ -1988,26 +2555,26 @@ function addMediaBoxResizeHandle(box, boxState) {
     const posHead = posWrap.append('xhtml:div').style('display', 'flex').style('align-items', 'center').style('gap', '6px')
     posHead.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Positive cues')
     positiveCount = posHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
-    buildTinyButton(posHead, '+', 'Add positive cue', () => {
-      positivePhrases = [...positivePhrases, { text: '', weight: 1.0 }]
-      buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
-      syncPromptStateFromUI()
-    })
     positiveContainer = posWrap.append('xhtml:div')
 
-    const negWrap = cuesRow.append('xhtml:div').style('display', 'flex').style('flex-direction', 'column').style('gap', '4px')
-    const negHead = negWrap.append('xhtml:div').style('display', 'flex').style('align-items', 'center').style('gap', '6px')
+    const negWrap = cuesRow.append('xhtml:div')
+      .style('display', 'flex')
+      .style('flex-direction', 'column')
+      .style('gap', '4px')
+    const negHead = negWrap.append('xhtml:div')
+      .style('display', 'flex')
+      .style('align-items', 'center')
+      .style('gap', '6px')
     negHead.append('xhtml:div').style('font-size', '10px').style('font-weight', '600').style('color', '#6b7280').text('Negative cues')
     negativeCount = negHead.append('xhtml:span').style('font-size', '10px').style('color', '#9ca3af').text('(0)')
     buildTinyButton(negHead, '+', 'Add negative cue', () => {
-      negativePhrases = [...negativePhrases, { text: '', weight: 1.0 }]
-      buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
+      negativePhrases = [...negativePhrases, { text: '', weight: 1.0, type: 'attribute' }]
+      renderNegativeEditor()
       syncPromptStateFromUI()
-    })
+    }).style('margin-left', 'auto')
     negativeContainer = negWrap.append('xhtml:div')
 
-    buildPhraseEditor(positiveContainer, () => positivePhrases, v => { positivePhrases = v }, positiveCount, 'positive')
-    buildPhraseEditor(negativeContainer, () => negativePhrases, v => { negativePhrases = v }, negativeCount, 'negative')
+    renderAllCueEditors()
 
     return sec
   }

@@ -595,8 +595,15 @@ body {
 }
 
 .phrase-input:focus {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 1px #bfdbfe;
+  border-color: var(--cue-focus-color, #94a3b8);
+  box-shadow:
+    0 0 0 1px var(--cue-focus-color, #94a3b8),
+    0 0 0 3px var(--cue-focus-ring, rgba(148, 163, 184, 0.2));
+}
+
+.phrase-input::selection {
+  color: inherit;
+  background-color: var(--cue-selection-color, rgba(148, 163, 184, 0.3));
 }
 
 .phrase-input:hover:not(:focus) {

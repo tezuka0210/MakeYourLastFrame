@@ -1262,7 +1262,14 @@ def process_agent_request():
             "global_context": current_state.get('global_context'),
             "knowledge_context": current_state.get('knowledge_context'),
             "image_caption":current_state.get('image_caption'),
-            "style": current_state.get('style')
+            "style": current_state.get('style'),
+            # 语义分解：实体 / 属性 / 关系。前端据此分组显示 cue，
+            # 并可分别记录三类的编辑行为。旧字段一个未动，纯新增。
+            "semantic_cues": {
+                "entities": current_state.get('entities', []) or [],
+                "attributes": current_state.get('attributes', []) or [],
+                "relations": current_state.get('relations', []) or []
+            }
         })
 
     except Exception as e:
@@ -1274,10 +1281,14 @@ def process_agent_request():
 def only_prompt_agent():
     try:
         # 1. 获取前端传递的参数：新 prompt + 前一轮 Agent 的关键上下文
-        data = request.get_json()
-        new_positive_prompt = data.get('positive_prompt', '')  # 前端传入的新 prompt
-        new_negative_prompt = data.get('negative_prompt', '')
-        prev_agent_context = data.get('prev_agent_context', {})  # 前一轮 Agent 结果的上下文
+        data = request.get_json(silent=True) or {}
+        new_positive_prompt = data.get('positive_prompt') or ''  # 前端传入的新 prompt
+        new_negative_prompt = data.get('negative_prompt') or ''
+        new_positive_cues = data.get('positive_cues')
+        new_negative_cues = data.get('negative_cues')
+        prev_agent_context = data.get('prev_agent_context') or {}  # 前一轮 Agent 结果的上下文
+        if not isinstance(prev_agent_context, dict):
+            prev_agent_context = {}
 
         # 2. 构造 Final Prompt Agent 所需的 state（复用前一轮上下文，覆盖新 prompt）
         prompt_agent_state = {
@@ -1289,6 +1300,11 @@ def only_prompt_agent():
             "selected_workflow": prev_agent_context.get('selected_workflow', ''),  # 前一轮选中的工作流
             # 新传入的 prompt（核心：覆盖 user_input，作为优化的原始输入）
             "user_input": new_positive_prompt,
+            "negative_prompt": new_negative_prompt,
+            # 结构化 cue 必须原样进入 Final Prompt Agent，否则用户编辑后的
+            # 类型和权重会在 only-prompt 这条轻量路径上丢失。
+            "positive_cues": new_positive_cues,
+            "negative_cues": new_negative_cues,
             # 其他 Final Prompt Agent 依赖的字段（按需从 prev_agent_context 提取）
             "style": prev_agent_context.get('style', ''),
         }

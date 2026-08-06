@@ -479,6 +479,8 @@ function toggleNodeCollapse(nodeId: string) {
           body: JSON.stringify({
             positive_prompt: parameters.positive_prompt, // 前端新传入的 prompt
             negative_prompt: parameters.negative_prompt,
+            positive_cues: parameters.positive_cues,
+            negative_cues: parameters.negative_cues,
             prev_agent_context: prevAgentContext||'' // 共享的前一轮上下文
           })
         });
@@ -512,6 +514,8 @@ function toggleNodeCollapse(nodeId: string) {
             ...parameters,
             optimized_positive_prompt: optimizedPrompt.positive,
             optimized_negative_prompt: optimizedPrompt.negative,
+            optimized_positive_cues: optimizedPrompt.positive_cues,
+            optimized_negative_cues: optimizedPrompt.negative_cues,
           }
         };
 
