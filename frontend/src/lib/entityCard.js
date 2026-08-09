@@ -183,7 +183,7 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
         img.src = fullPath;
         img.style.pointerEvents = 'none';
         // 标题保留原有格式，仅补充output标识（不影响视觉）
-        img.title = `${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`} (双击放大)`;
+        img.title = `${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`} (double-click to enlarge)`;
         img.style.cssText = `
             width: 100%;
             height: 100%;
@@ -211,7 +211,7 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
             box-shadow: 0 1px 2px rgba(0,0,0,0.2);
         `;
         deleteBtn.innerText = '×';
-        deleteBtn.title = `删除${asset.type === 'output' ? '输出' : '实体'}图片`;
+        deleteBtn.title = `Delete ${asset.type === 'output' ? 'output' : 'entity'} image`;
 
         // 鼠标悬停效果（完全保留你原有逻辑）
         imgWrapper.onmouseenter = () => {
@@ -229,7 +229,7 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
         // 删除按钮点击事件（兼容output图片，逻辑不变）
         deleteBtn.onclick = (e) => {
             e.stopPropagation();
-            const confirmDelete = window.confirm(`确定要删除${asset.type === 'output' ? '输出' : '实体'}图片 "${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`}" 吗？`);
+            const confirmDelete = window.confirm(`Delete the ${asset.type === 'output' ? 'output' : 'entity'} image "${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`}"?`);
             if (!confirmDelete) return;
 
             // 根据类型删除对应数组中的元素
@@ -258,7 +258,7 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
             // 更新显示
             updateEntityDisplay(nodeId, segmentedAssets, node);
             
-            console.log(`[EntityCard] ${asset.type}图片已删除：${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`} in node ${nodeId}`);
+            console.log(`[EntityCard] ${asset.type} image deleted: ${asset.label || `${asset.type === 'entity' ? 'entity' : 'output-image'}-${index}`} in node ${nodeId}`);
         };
 
         // 5. 单击事件（保留原有逻辑）
@@ -307,10 +307,10 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
                     a.remove();
                     canvas.remove();
 
-                    console.log(`[EntityCard] ${asset.type}图片保存成功：${fileName}`);
+                    console.log(`[EntityCard] ${asset.type} image saved: ${fileName}`);
                 } catch (error) {
-                    console.error('[EntityCard] 图片保存失败：', error);
-                    alert('图片保存失败，请检查图片链接或网络！');
+                    console.error('[EntityCard] Failed to save image:', error);
+                    alert('Failed to save the image. Check the image URL and your network connection.');
                 }
             };
 

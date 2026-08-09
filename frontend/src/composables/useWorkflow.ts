@@ -326,7 +326,7 @@ function toggleNodeCollapse(nodeId: string) {
   if (!node) return;
   // 原地改，数组引用不变
   node._collapsed = !node._collapsed;
-  console.log(`[parent] 节点 ${nodeId} -> _collapsed = ${node._collapsed}`);
+  console.log(`[parent] node ${nodeId} -> _collapsed = ${node._collapsed}`);
 }
 
   // --- 6. 导出的逻辑函数 (Actions) ---
@@ -415,8 +415,8 @@ function toggleNodeCollapse(nodeId: string) {
         allNodes.value = [...allNodes.value];
       }
     } catch (error: any) {
-      console.error("更新节点媒体失败:", error);
-      alert(`更新失败: ${error.message}`);
+      console.error("Failed to update node media:", error);
+      alert(`Update failed: ${error.message}`);
       showStatus('更新失败，请重试。');
     } finally {
       isGenerating.value = false;
@@ -454,7 +454,7 @@ function toggleNodeCollapse(nodeId: string) {
       processTreeData(updatedTree.nodes, '反馈已提交。')
       return true
     } catch (error: any) {
-      console.error('提交生成反馈失败:', error)
+      console.error('Failed to submit generation feedback:', error)
       showStatus(`反馈提交失败: ${error.message}`)
       return false
     }
@@ -488,8 +488,8 @@ function toggleNodeCollapse(nodeId: string) {
 
       
     } catch (error: any) {
-      console.error("处理上传失败:", error)
-      alert(`上传失败: ${error.message}`)
+      console.error("Upload handling failed:", error)
+      alert(`Upload failed: ${error.message}`)
       showStatus('上传失败，请重试。')
     } finally {
       isGenerating.value = false
@@ -605,8 +605,8 @@ function toggleNodeCollapse(nodeId: string) {
       }
 
     } catch (error: any) {
-      console.error('生成请求处理失败:', error);
-      alert(error.message || '生成失败，请重试');
+      console.error('Generation request failed:', error);
+      alert(error.message || 'Generation failed. Please try again.');
       showStatus('生成失败');
     } finally {
       isGenerating.value = false;
@@ -645,8 +645,8 @@ function toggleNodeCollapse(nodeId: string) {
       showStatus('节点删除成功。')
 
     } catch (error: any) {
-      console.error("删除节点时出错:", error)
-      alert(`删除失败: ${error.message}`)
+      console.error("Error while deleting node:", error)
+      alert(`Delete failed: ${error.message}`)
       showStatus('删除失败，请重试。')
     } finally {
       isGenerating.value = false
@@ -660,7 +660,7 @@ function toggleNodeCollapse(nodeId: string) {
   async function addClipToStitch(node: AppNode,url:string, type: 'image' | 'video' | 'audio') {
     // 1. 检查 media 数组是否存在且不为空
     if (!node.media || node.media.length === 0) {
-      console.warn(`[addClipToStitch] 节点 ${node.id} 没有可添加的媒体。`);
+      console.warn(`[addClipToStitch] Node ${node.id} has no media to add.`);
       return;
     }
     //console.log(`addClipToStitch:${node.media}`)
@@ -670,18 +670,18 @@ function toggleNodeCollapse(nodeId: string) {
 
     // 3. 如果没有找到 output 媒体，可以选择第一个，或者直接返回
     if (!targetMedia) {
-      console.warn(`[addClipToStitch] 节点 ${node.id} 没有找到 'output' 类型的媒体，将使用第一个可用媒体。`);
+      console.warn(`[addClipToStitch] Node ${node.id} has no 'output' media; falling back to the first available media.`);
       // 或者直接 return; 如果必须要有 output 媒体的话
       // return; 
     }
     
     // 如果连第一个都没有（理论上不会发生）
     if (!targetMedia) {
-      console.error(`[addClipToStitch] 节点 ${node.id} 媒体数组为空或无效。`);
+      console.error(`[addClipToStitch] Node ${node.id} has an empty or invalid media array.`);
       return;
     }
 
-    console.log(`[addClipToStitch] 接收到类型：${type}，将添加媒体:`, targetMedia);
+    console.log(`[addClipToStitch] Received type ${type}; adding media:`, targetMedia);
 
     try {
       // 注意：下面的代码都从 targetMedia 获取信息，而不是 node.media
@@ -704,7 +704,7 @@ function toggleNodeCollapse(nodeId: string) {
         });
 
       } else if (type === 'video') {
-        console.log(`video来了`)
+        console.log(`video detected`)
         const videoDuration = await getVideoDuration(targetMedia);
         bufferClips.push({
           nodeId: node.id,
@@ -723,11 +723,11 @@ function toggleNodeCollapse(nodeId: string) {
           duration: 3.0,
         });
       }
-      console.log(`[addClipToStitch] 已推入 bufferClips (${type})，当前数量:`, bufferClips.length);
+      console.log(`[addClipToStitch] Pushed to bufferClips (${type}); count is now:`, bufferClips.length);
 
     } catch (error: any) {
-      console.error('添加片段到 bufferClips 时出错:', error);
-      alert('无法加载媒体元数据，添加失败。');
+      console.error('Error while adding a clip to bufferClips:', error);
+      alert('Could not read media metadata. The clip was not added.');
     }
   }
 
@@ -742,15 +742,15 @@ function toggleNodeCollapse(nodeId: string) {
   /** (Action) 请求后端拼接视频 (由 StitchingPanel.vue 调用) */
   async function handleStitchRequest() {
     if (stitchingClips.length < 1) {
-      alert('请至少添加一个片段进行拼接。')
+      alert('Add at least one clip before stitching.')
       return
     }
     isStitching.value = true
     showStatus('正在请求后端拼接...')
     // --- 【调试】---
-    console.log("--- [Stitch Request] 准备发送 ---");
-    console.log("V1 (video) 轨道内容:", JSON.stringify(stitchingClips));
-    console.log("A1 (audio) 轨道内容:", JSON.stringify(audioClips));
+    console.log("--- [Stitch Request] preparing to send ---");
+    console.log("V1 (video) track contents:", JSON.stringify(stitchingClips));
+    console.log("A1 (audio) track contents:", JSON.stringify(audioClips));
     // --- 【调试】---
     // StitchingPanel.vue 应该自己显示结果, 这里只更新 status
     // 准备要发送的数据
@@ -769,7 +769,7 @@ function toggleNodeCollapse(nodeId: string) {
         clips: clipsData, 
         audio_clips: audioClipsData 
     }
-    console.log("发送到后端的 Payload:", payload);
+    console.log("Payload sent to backend:", payload);
     // --- 【调试】---
 
     try {

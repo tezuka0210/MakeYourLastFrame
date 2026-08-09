@@ -339,7 +339,7 @@ export function getVisibleNodesAndLinks(allNodes) {
   const visibleIds = new Set(visibleNodes.map(n => n.id))
   
   // --- 调试点 2: 检查 ID 存在性 ---
-  console.log("当前可见节点 IDs:", Array.from(visibleIds));
+  console.log("Currently visible node IDs:", Array.from(visibleIds));
 
   const visibleLinks = []
   visibleNodes.forEach(n => {
@@ -351,7 +351,7 @@ export function getVisibleNodesAndLinks(allNodes) {
           visibleLinks.push({ source: pId, target: n.id });
         } else {
           // --- 调试点 3: 追踪丢失的连线 ---
-          console.warn(`节点[${n.id}] 试图连接父节点[${pId}]，但该父节点不可见(被隐藏或已删除)`);
+          console.warn(`Node[${n.id}] tried to link to parent[${pId}], but that parent is not visible (hidden or deleted).`);
         }
       })
     }
@@ -613,7 +613,7 @@ export function renderTree(
   console.log("=== RenderTree Check ===");
   allNodesData.forEach(n => {
     if (n.originalParents && n.originalParents.length > 0) {
-      console.log(`Node[${n.id}] 的父节点列表:`, n.originalParents);
+      console.log(`Parent list for Node[${n.id}]:`, n.originalParents);
     }
   });
 
@@ -3416,14 +3416,14 @@ function renderMediaContent(container, data) {
 
     // if (d.isComposite) {
     //   // 复合节点：调用专属渲染函数
-    //   console.log('渲染复合节点：', d.id); // 验证是否走到这里
+    //   console.log('Rendering composite node:', d.id); // 验证是否走到这里
     //   renderCompositeNode(gEl, d, selectedIds, emit);
     // } 
     if (cardType === 'textFull') {
       console.log(`renderTree textFull`)
       renderTextFullNode(gEl, d, selectedIds, emit)
     } else if (getNodeCategory(d) === 'composite') {
-      console.log('渲染复合节点：', d.id)
+      console.log('Rendering composite node:', d.id)
       renderCompositeNode(gEl, d, selectedIds, emit)
     } else if (cardType === 'audio' || isAudioMedia) {
       renderAudioNode(gEl, d, selectedIds, emit, workflowTypes)
@@ -3439,7 +3439,7 @@ function renderMediaContent(container, data) {
 
   setTimeout(() => {
     allNodesData.forEach(node => {
-      console.log(`检查节点 ${node.id} 的实体数据:`, node.assets?.segmented)
+      console.log(`Checking entity data for node ${node.id}:`, node.assets?.segmented)
 
       if (!hasSegmentData(node)) return
 

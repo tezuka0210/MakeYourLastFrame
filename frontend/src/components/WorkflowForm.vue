@@ -2,7 +2,7 @@
   <div id="workflow-form" class="space-y-4">
     <!-- 父节点提示 -->
     <div v-if="props.selectedIds.length === 0">
-      <label class="block text-sm font-medium text-gray-600 mb-1">父节点</label>
+      <label class="block text-sm font-medium text-gray-600 mb-1">Parent Node</label>
       <input
         type="text"
         value="未选择 (将创建根节点)"
@@ -12,7 +12,7 @@
     </div>
 
     <div v-else-if="props.selectedIds.length === 1">
-      <label class="block text-sm font-medium text-gray-600 mb-1">父节点:</label>
+      <label class="block text-sm font-medium text-gray-600 mb-1">Parent Node:</label>
       <input
         type="text"
         :value="`节点: ${parentNode1Id?.substring(0, 8)}...`"
@@ -22,9 +22,9 @@
     </div>
 
     <div v-else-if="props.selectedIds.length === 2" class="space-y-2">
-      <p v-if="moduleId === 'ImageMerging'" class="text-xs font-medium text-green-600">合并就绪</p>
+      <p v-if="moduleId === 'ImageMerging'" class="text-xs font-medium text-green-600">Ready to merge</p>
       <div>
-        <label class="block text-sm font-medium text-gray-600 mb-1">父节点 1:</label>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Parent Node 1:</label>
         <input
           type="text"
           :value="`节点: ${parentNode1Id?.substring(0, 8)}...`"
@@ -33,7 +33,7 @@
         >
       </div>
       <div>
-        <label class="block text-sm font-medium text-gray-600 mb-1">父节点 2:</label>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Parent Node 2:</label>
         <input
           type="text"
           :value="`节点: ${parentNode2Id?.substring(0, 8)}...`"
@@ -45,7 +45,7 @@
 
     <!-- 模块选择 -->
     <div>
-      <label for="module-select" class="block text-sm font-medium text-gray-600 mb-1">选择模块</label>
+      <label for="module-select" class="block text-sm font-medium text-gray-600 mb-1">Select Module</label>
       <select
         id="module-select"
         v-model="moduleId"
@@ -104,7 +104,7 @@
         <button
           type="button"
           class="absolute top-2 right-14 h-7 min-w-7 rounded-full border border-gray-300 bg-white px-2 text-xs text-gray-600 hover:bg-gray-50"
-          title="导出语音测试数据"
+          title="Export speech test data"
           @click="exportSpeechTimingRecordsCsv"
         >
           CSV
@@ -138,7 +138,7 @@
 
     <!-- 图片上传 -->
     <div>
-      <label for="image-upload" class="block text-sm font-medium text-gray-600 mb-1">图片输入 (可选)</label>
+      <label for="image-upload" class="block text-sm font-medium text-gray-600 mb-1">Image Input (optional)</label>
       <input
         type="file"
         id="image-upload"
@@ -148,7 +148,7 @@
         accept="image/*"
         class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
       >
-      <p class="text-xs text-gray-500 mt-1">提示：上传新图将覆盖父节点图像。</p>
+      <p class="text-xs text-gray-500 mt-1">Note: uploading a new image replaces the parent node's image.</p>
     </div>
 
     <!-- 生成按钮 -->
@@ -159,7 +159,7 @@
         @click="onGenerateClick"
         class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center transition-colors disabled:bg-gray-400"
       >
-        <span id="button-text">{{ isGenerating ? '生成中...' : '开始生成' }}</span>
+        <span id="button-text">{{ isGenerating ? 'Generating…' : 'Generate' }}</span>
         <div
           id="button-loader"
           :class="['loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3', { 'hidden': !isGenerating }]"

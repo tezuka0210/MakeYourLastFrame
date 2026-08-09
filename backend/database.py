@@ -87,8 +87,30 @@ def init_db():
         );
         ''')
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_child_node ON node_parents (child_node_id)")         
+        # 创建 CompositionRecords 表：记录每一次从画布导出取景框时的构图。
+        # 完全独立的附加表，不被任何既有逻辑读取，不影响原有流程。
+        # 用途：同一 scene_session_id 下的多个取景框可以直接算重叠区域，
+        #      从而得到不同关键帧之间共享了哪些部件。
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS CompositionRecords (
+            record_id TEXT PRIMARY KEY,
+            tree_id INTEGER,
+            node_id TEXT,                -- 可为空：导出时还没有对应节点
+            buffer_node_id TEXT,         -- 前端 buffer clip 的 nodeId
+            scene_session_id TEXT,       -- 同一次画布状态下的多个取景框共享
+            viewport_index INTEGER,      -- 第几个取景框，整幅导出时为 NULL
+            export_type TEXT,            -- origin / combined / mask
+            image_url TEXT,
+            viewport_rect TEXT,          -- JSON: 取景框在场景坐标系里的 {x,y,w,h}
+            composition TEXT,            -- JSON: 完整构图记录（部件、层序、位置、可见性）
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        ''')
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_child_node ON node_parents (child_node_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_parent_node ON node_parents (parent_node_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_composition_scene ON CompositionRecords (scene_session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_composition_node ON CompositionRecords (node_id)")
 
         conn.commit()
         #conn.close()
@@ -673,6 +695,141 @@ def add_entity_appearance(tree_id, name, node_id, branch_id, image_url):
         raise
     finally:
         conn.close()
+
+# ------------------------------ 构图记录（附加功能） ------------------------------
+# 这一组函数完全独立，不被任何既有流程调用，删除它们不影响系统运行。
+
+def add_composition_record(payload: dict) -> str | None:
+    """
+    保存一次画布取景框导出的构图记录。
+    payload 至少应包含 composition（前端 buildCompositionRecord 的输出）。
+    其余字段均可缺省。返回 record_id，失败返回 None。
+    """
+    composition = payload.get('composition') or {}
+    record_id = payload.get('record_id') or str(uuid.uuid4())
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            '''
+            INSERT INTO CompositionRecords
+                (record_id, tree_id, node_id, buffer_node_id, scene_session_id,
+                 viewport_index, export_type, image_url, viewport_rect, composition)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                record_id,
+                payload.get('tree_id'),
+                payload.get('node_id'),
+                payload.get('buffer_node_id'),
+                composition.get('sceneSessionId'),
+                composition.get('viewportIndex'),
+                composition.get('exportType'),
+                payload.get('image_url'),
+                json.dumps(composition.get('viewportSceneRect'), ensure_ascii=False),
+                json.dumps(composition, ensure_ascii=False),
+            )
+        )
+        conn.commit()
+        return record_id
+    except sqlite3.Error as e:
+        print(f"保存构图记录失败: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_composition_records(scene_session_id: str | None = None,
+                            tree_id: int | None = None) -> list:
+    """按场景会话或树取出构图记录。"""
+    conn = get_db_connection()
+    try:
+        sql = "SELECT * FROM CompositionRecords WHERE 1=1"
+        args = []
+        if scene_session_id:
+            sql += " AND scene_session_id = ?"
+            args.append(scene_session_id)
+        if tree_id is not None:
+            sql += " AND tree_id = ?"
+            args.append(tree_id)
+        sql += " ORDER BY created_at ASC"
+
+        rows = conn.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            item = dict(r)
+            for key in ('viewport_rect', 'composition'):
+                try:
+                    item[key] = json.loads(item[key]) if item[key] else None
+                except (TypeError, ValueError):
+                    pass
+            out.append(item)
+        return out
+    except sqlite3.Error as e:
+        print(f"读取构图记录失败: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def compute_viewport_intersections(scene_session_id: str) -> list:
+    """
+    计算同一场景会话下，任意两个取景框之间的重叠情况。
+    返回每一对取景框共享了哪些部件、几何重叠面积占比多少。
+
+    这正是「两个关键帧的交集」的量化形式。
+    """
+    records = get_composition_records(scene_session_id=scene_session_id)
+    results = []
+
+    def area(rect):
+        if not rect:
+            return 0.0
+        return max(0.0, rect.get('w', 0)) * max(0.0, rect.get('h', 0))
+
+    def overlap(a, b):
+        if not a or not b:
+            return 0.0
+        left = max(a.get('x', 0), b.get('x', 0))
+        top = max(a.get('y', 0), b.get('y', 0))
+        right = min(a.get('x', 0) + a.get('w', 0), b.get('x', 0) + b.get('w', 0))
+        bottom = min(a.get('y', 0) + a.get('h', 0), b.get('y', 0) + b.get('h', 0))
+        if right <= left or bottom <= top:
+            return 0.0
+        return (right - left) * (bottom - top)
+
+    for i in range(len(records)):
+        for j in range(i + 1, len(records)):
+            a, b = records[i], records[j]
+            comp_a = a.get('composition') or {}
+            comp_b = b.get('composition') or {}
+
+            ids_a = set(comp_a.get('visibleItemIds') or [])
+            ids_b = set(comp_b.get('visibleItemIds') or [])
+            shared_items = sorted(ids_a & ids_b)
+
+            refs_a = set(comp_a.get('visibleEntityRefs') or [])
+            refs_b = set(comp_b.get('visibleEntityRefs') or [])
+
+            rect_a = a.get('viewport_rect')
+            rect_b = b.get('viewport_rect')
+            inter = overlap(rect_a, rect_b)
+            union = area(rect_a) + area(rect_b) - inter
+
+            results.append({
+                'record_a': a.get('record_id'),
+                'record_b': b.get('record_id'),
+                'viewport_a': comp_a.get('viewportIndex'),
+                'viewport_b': comp_b.get('viewportIndex'),
+                'shared_item_ids': shared_items,
+                'shared_item_count': len(shared_items),
+                'shared_entity_refs': sorted(refs_a & refs_b),
+                'geometric_overlap_area': inter,
+                'geometric_overlap_iou': (inter / union) if union > 0 else 0.0,
+            })
+
+    return results
+
 
 # --- (可选) 用于测试的 main 函数 ---
 if __name__ == '__main__':

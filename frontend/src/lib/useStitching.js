@@ -447,7 +447,7 @@ export function useStitching(props, emit) {
       if (!moved) return
       if (!isClipCompatibleWithTrack(moved, targetTrack)) {
         bufferList.splice(src.index, 0, moved)
-        console.warn(`类型不匹配：${moved.type} 不能拖到 ${targetTrack} 轨道`)
+        console.warn(`Type mismatch: ${moved.type} cannot be dropped on the ${targetTrack} track`)
         draggedOver.value = null
         draggedClip.value = null
         return
@@ -464,7 +464,7 @@ export function useStitching(props, emit) {
       return
     }
 
-    console.warn('暂不支持从', src.track, '拖到', targetTrack)
+    console.warn('Dragging from', src.track, 'to', targetTrack, 'is not supported yet')
   }
 
   function handleDragEnd() {
@@ -492,7 +492,7 @@ export function useStitching(props, emit) {
   function handleDropContainer(targetTrack) {
     const src = draggedClip.value
     if (!src || (targetTrack !== 'video' && targetTrack !== 'audio')) {
-      console.warn('容器拖放无效。')
+      console.warn('Invalid container drop.')
       return
     }
 
@@ -525,7 +525,7 @@ export function useStitching(props, emit) {
       if (!moved) return
       if (!isClipCompatibleWithTrack(moved, targetTrack)) {
         bufferList.splice(src.index, 0, moved)
-        console.warn(`类型不匹配：${moved.type} 不能拖到 ${targetTrack} 轨道`)
+        console.warn(`Type mismatch: ${moved.type} cannot be dropped on the ${targetTrack} track`)
         isDraggingOverContainer.value = null
         draggedClip.value = null
         return
@@ -541,7 +541,7 @@ export function useStitching(props, emit) {
       return
     }
 
-    console.warn('容器拖放：暂不支持从', src.track, '到', targetTrack)
+    console.warn('Container drop: from', src.track, 'to', targetTrack, 'is not supported yet')
   }
 
 

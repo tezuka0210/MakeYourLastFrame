@@ -61,7 +61,7 @@ function formatCsvTimestamp(date = new Date()) {
 
 export function exportSpeechTimingRecordsCsv() {
   if (!speechTimingRecords.length) {
-    window.alert('暂无语音测试数据可导出')
+    window.alert('No speech test data available to export.')
     return
   }
 

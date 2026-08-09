@@ -55,6 +55,27 @@ export function initCanvasDrag() {
   let highlightedItemIds = new Set();
   let layerMenu = null;
   let layerMenuTarget = null;
+
+  // 取景框右键菜单（附加功能）
+  let regionMenu = null;
+  let regionMenuTarget = null;
+
+  // 画取景框时的比例吸附提示
+  let aspectBadgeEl = null;
+  let aspectGuideEls = [];
+  let lastRegionDrawRect = null;
+
+  // 素材编组（附加功能）
+  let groups = [];
+  // 按住空格进入临时平移模式（与 Figma / Photoshop / Illustrator 一致）
+  let spacePanHeld = false;
+  let groupMarqueeEl = null;
+  let groupMarqueeStart = null;
+  let groupMenu = null;
+  let groupMenuTarget = null;
+  let selectedGroup = null;
+  let dragGroupSiblings = null;
+  let dragGroupRef = null;
   let layerSeed = 0;
 
   let dragCandidate = null;
@@ -80,6 +101,10 @@ export function initCanvasDrag() {
   let subCanvasStart = { x: 0, y: 0 };
   let tempDrawRect = null;
   let activeRegionId = null;
+
+  // 场景会话 ID：同一次画布状态下导出的所有取景框共享此 ID，
+  // 用于事后计算不同关键帧之间的构图交集。纯附加，不影响既有逻辑。
+  const sceneSessionId = `scene_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   let paintMode = false;
   let isPainting = false;
@@ -109,6 +134,26 @@ export function initCanvasDrag() {
   const DELETE_HANDLE_DELAY = 1500;
   const DELETE_HANDLE_HIDE_DELAY = 180;
   const REGION_GRIP_HEIGHT = 20;
+  // 取景框推拉时的最小边长，避免缩到不可见
+  const REGION_MIN_SIZE = 40;
+
+  // 画取景框时可吸附的常见画幅比例。value = 宽 / 高
+  const ASPECT_PRESETS = [
+    { label: '9:16',   value: 9 / 16 },   // vertical / short-form
+    { label: '2:3',    value: 2 / 3 },
+    { label: '3:4',    value: 3 / 4 },    // vertical classic
+    { label: '1:1',    value: 1 },        // square
+    { label: '5:4',    value: 5 / 4 },
+    { label: '4:3',    value: 4 / 3 },    // classic
+    { label: '3:2',    value: 3 / 2 },    // photo
+    { label: '16:9',   value: 16 / 9 },   // standard video
+    { label: '1.85:1', value: 1.85 },     // theatrical flat
+    { label: '2:1',    value: 2 },        // Univisium
+    { label: '21:9',   value: 21 / 9 },   // ultrawide
+    { label: '2.39:1', value: 2.39 }      // anamorphic scope
+  ];
+  // 相对误差在此范围内就吸附
+  const ASPECT_SNAP_TOLERANCE = 0.05;
 
   let lastDragData = null;
   let boardDragDepth = 0;
@@ -802,18 +847,19 @@ export function initCanvasDrag() {
     const highlighted = highlightedItemIds.has(item.id);
     const selected = currentSelectedItem === item;
 
+    // 选中态与编组一致：浅灰底 + 细边，不用深色粗描边
     item.element.style.outline = highlighted
-      ? '3px solid #f59e0b'
-      : (selected ? '2px solid rgba(71, 85, 105, 0.45)' : 'none');
+      ? '2px solid #6b7280'
+      : (selected ? '1.5px solid #6b7280' : 'none');
     item.element.style.outlineOffset = highlighted ? '3px' : '0';
-    item.element.style.filter = highlighted ? 'drop-shadow(0 0 7px rgba(245, 158, 11, 0.6))' : 'none';
+    item.element.style.backgroundColor = (highlighted || selected)
+      ? 'rgba(17,24,39,0.05)'
+      : 'transparent';
+    item.element.style.filter = 'none';
 
     if (item.labelEl) {
-      item.labelEl.style.borderColor = highlighted ? '#f59e0b' : 'rgba(100,116,139,0.28)';
-      item.labelEl.style.background = highlighted ? 'rgba(255,247,237,0.98)' : 'rgba(255,255,255,0.92)';
-      item.labelEl.style.boxShadow = highlighted
-        ? '0 0 0 2px rgba(245,158,11,0.28), 0 3px 10px rgba(245,158,11,0.2)'
-        : (selected ? '0 0 0 2px rgba(71, 85, 105, 0.15)' : '0 1px 3px rgba(0,0,0,0.08)');
+      item.labelEl.style.background = (highlighted || selected) ? '#4b5563' : '#8b929e';
+      item.labelEl.style.boxShadow = 'none';
     }
   }
 
@@ -858,10 +904,7 @@ export function initCanvasDrag() {
     const labelEl = item.labelEl;
 
     labelEl.style.left = `${pos.x}px`;
-    labelEl.style.maxWidth = `${Math.max(120, item.element.offsetWidth)}px`;
-
-    const labelH = labelEl.offsetHeight || 24;
-    labelEl.style.top = `${Math.max(0, pos.y - labelH - 6)}px`;
+    labelEl.style.top = `${Math.max(0, pos.y - 22)}px`;
 
     applyItemVisualLayer(item);
   }
@@ -881,19 +924,18 @@ export function initCanvasDrag() {
     if (!item.labelEl) {
       const labelEl = document.createElement('div');
       labelEl.className = 'canvas-image-label';
+      // 与编组标签保持同一套外观：灰底、白字、小圆角
       labelEl.style.cssText = `
         position:absolute;
-        padding:4px 8px;
-        background:rgba(255,255,255,0.92);
-        border:1px solid rgba(100,116,139,0.28);
-        border-radius:6px;
+        padding:2px 8px;
+        background:#8b929e;
+        border-radius:4px;
         font-size:12px;
-        line-height:1.35;
-        color:#0f172a;
+        font-weight:500;
+        line-height:18px;
+        color:#ffffff;
         pointer-events:none;
-        white-space:normal;
-        word-break:break-word;
-        box-shadow:0 1px 3px rgba(0,0,0,0.08);
+        white-space:nowrap;
       `;
       drawingScene.appendChild(labelEl);
       item.labelEl = labelEl;
@@ -1745,10 +1787,22 @@ export function initCanvasDrag() {
 
     el.addEventListener('mousedown', ev => {
       if (paintMode) return;
+
+      // 空格 / 中键要平移，或点在素材的透明处 —— 都当作空白区域处理，
+      // 这样用户可以在看上去是空白的地方框选和平移。
+      if (spacePanHeld || ev.button === 1 || !isOpaqueAt(item, ev.clientX, ev.clientY)) {
+        handleEmptyAreaMouseDown(ev);
+        return;
+      }
+
       if (ev.button !== 0) return;
 
       hideDeleteHandle(item, true);
-      selectItem(item);
+
+      // 属于编组时，选中的是整个编组（外框高亮），而不是被点到的那个成员
+      const ownerGroup = getGroupOfItem(item);
+      if (ownerGroup) selectGroup(ownerGroup);
+      else { selectGroup(null); selectItem(item); }
 
       dragCandidate = {
         item,
@@ -1764,6 +1818,13 @@ export function initCanvasDrag() {
         ev.preventDefault();
         ev.stopPropagation();
 
+        // 属于编组时整组一起缩放，保持成员间的相对位置与大小关系
+        const group = getGroupOfItem(item);
+        if (group) {
+          scaleGroupAboutCenter(group, ev.deltaY > 0 ? 0.9 : 1.1);
+          return;
+        }
+
         let scale = parseFloat(el.dataset.scale || '1');
         scale += ev.deltaY > 0 ? -0.1 : 0.1;
         scale = clamp(scale, MIN_SCALE, MAX_SCALE);
@@ -1774,6 +1835,642 @@ export function initCanvasDrag() {
         const current = getImagePosition(el);
         setImagePosition(el, current.x, current.y);
       }, { passive: false });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // 画幅比例吸附（附加）
+  //
+  // 画取景框时找最接近的常见画幅比例，误差在容差内就吸附过去，
+  // 并显示比例标签与对齐辅助线。让手圈也能得到精确的画幅。
+  // ---------------------------------------------------------------------
+
+  function findNearestAspect(w, h) {
+    if (!(w > 0) || !(h > 0)) return null;
+
+    const ratio = w / h;
+    let best = null;
+
+    ASPECT_PRESETS.forEach(preset => {
+      const err = Math.abs(ratio - preset.value) / preset.value;
+      if (!best || err < best.err) best = { ...preset, err };
+    });
+
+    return best;
+  }
+
+  // 以拖拽起点为锚，把矩形吸附到最近的常见比例
+  function snapRectToAspect(startX, startY, curX, curY) {
+    const rawW = Math.abs(curX - startX);
+    const rawH = Math.abs(curY - startY);
+    const nearest = findNearestAspect(rawW, rawH);
+
+    let w = rawW;
+    let h = rawH;
+    let snapped = false;
+    let label = '';
+
+    if (nearest && nearest.err <= ASPECT_SNAP_TOLERANCE) {
+      // 以较长边为准换算另一边，避免吸附时框突然跳动
+      if (rawW >= rawH) h = rawW / nearest.value;
+      else w = rawH * nearest.value;
+      snapped = true;
+      label = nearest.label;
+    } else if (nearest) {
+      label = `${(rawW / Math.max(1, rawH)).toFixed(2)}:1`;
+    }
+
+    const l = curX >= startX ? startX : startX - w;
+    const t = curY >= startY ? startY : startY - h;
+
+    return { l, t, w, h, snapped, label };
+  }
+
+  function ensureAspectFeedbackEls() {
+    if (!aspectBadgeEl) {
+      aspectBadgeEl = document.createElement('div');
+      aspectBadgeEl.style.cssText = `
+        position:absolute;
+        display:none;
+        padding:2px 8px;
+        border-radius:4px;
+        font-size:12px;
+        font-weight:600;
+        line-height:18px;
+        color:#ffffff;
+        background:#111827;
+        pointer-events:none;
+        z-index:1000;
+        white-space:nowrap;
+      `;
+      drawingScene.appendChild(aspectBadgeEl);
+    }
+
+    if (aspectGuideEls.length === 0) {
+      for (let i = 0; i < 4; i++) {
+        const g = document.createElement('div');
+        g.style.cssText = `
+          position:absolute;
+          display:none;
+          background:#6b7280;
+          opacity:0.4;
+          pointer-events:none;
+          z-index:999;
+        `;
+        drawingScene.appendChild(g);
+        aspectGuideEls.push(g);
+      }
+    }
+  }
+
+  function updateAspectFeedback(rect) {
+    ensureAspectFeedbackEls();
+
+    aspectBadgeEl.textContent = rect.snapped ? `${rect.label}  ✓` : rect.label;
+    aspectBadgeEl.style.background = rect.snapped ? '#111827' : '#9ca3af';
+    aspectBadgeEl.style.display = 'block';
+    aspectBadgeEl.style.left = `${rect.l}px`;
+    aspectBadgeEl.style.top = `${Math.max(0, rect.t - 24)}px`;
+
+    // 吸附成功时画四条延伸辅助线，帮助与画面里其它元素对齐
+    if (rect.snapped) {
+      const span = 4000;
+      const lines = [
+        { left: rect.l - span, top: rect.t, width: span * 2, height: 1 },
+        { left: rect.l - span, top: rect.t + rect.h, width: span * 2, height: 1 },
+        { left: rect.l, top: rect.t - span, width: 1, height: span * 2 },
+        { left: rect.l + rect.w, top: rect.t - span, width: 1, height: span * 2 }
+      ];
+      aspectGuideEls.forEach((g, i) => {
+        const s = lines[i];
+        g.style.display = 'block';
+        g.style.left = `${s.left}px`;
+        g.style.top = `${s.top}px`;
+        g.style.width = `${s.width}px`;
+        g.style.height = `${s.height}px`;
+      });
+    } else {
+      aspectGuideEls.forEach(g => { g.style.display = 'none'; });
+    }
+  }
+
+  function hideAspectFeedback() {
+    if (aspectBadgeEl) aspectBadgeEl.style.display = 'none';
+    aspectGuideEls.forEach(g => { g.style.display = 'none'; });
+  }
+
+  // ---------------------------------------------------------------------
+  // 素材编组（附加）
+  //
+  // 用途：把手绘内容和分割出来的素材打包成一个整体命名操作，
+  // 整体拖动与缩放时保持它们之间的相对位置不变。
+  // 例如把"小女孩"和一笔画出来的"蝴蝶"打成一组。
+  // ---------------------------------------------------------------------
+
+  function getGroupById(groupId) {
+    return groups.find(g => g.id === groupId) || null;
+  }
+
+  function getGroupMembers(group) {
+    if (!group) return [];
+    return droppedImages.filter(it => group.memberIds.includes(it.id));
+  }
+
+  function getGroupOfItem(item) {
+    return item?.groupId ? getGroupById(item.groupId) : null;
+  }
+
+  function getItemsBounds(items) {
+    if (!items.length) return null;
+
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    items.forEach(it => {
+      const pos = getImagePosition(it.element);
+      const { w, h } = getItemSize(it);
+      left = Math.min(left, pos.x);
+      top = Math.min(top, pos.y);
+      right = Math.max(right, pos.x + w);
+      bottom = Math.max(bottom, pos.y + h);
+    });
+
+    return { x: left, y: top, w: right - left, h: bottom - top };
+  }
+
+  function createGroupFromItems(items, name) {
+    const members = items.filter(it => it && it.kind !== 'region');
+    if (members.length < 2) return null;
+
+    const id = `group_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const frameEl = document.createElement('div');
+    frameEl.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      border:1px dashed #b0b6c0;
+      border-radius:6px;
+      background:rgba(17,24,39,0.02);
+      pointer-events:none;
+      z-index:15;
+      transform-origin:top left;
+      will-change:transform;
+    `;
+    drawingScene.appendChild(frameEl);
+
+    const labelEl = document.createElement('div');
+    labelEl.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      padding:2px 8px;
+      border-radius:4px;
+      font-size:12px;
+      font-weight:500;
+      line-height:18px;
+      color:#ffffff;
+      background:#8b929e;
+      pointer-events:auto;
+      cursor:pointer;
+      z-index:16;
+      white-space:nowrap;
+      user-select:none;
+      transform-origin:top left;
+      will-change:transform;
+    `;
+    labelEl.title = 'Double-click to rename. Right-click for more actions.';
+    drawingScene.appendChild(labelEl);
+
+    const group = {
+      id,
+      name: name || `Group ${groups.length + 1}`,
+      memberIds: members.map(it => it.id),
+      frameEl,
+      labelEl
+    };
+
+    members.forEach(it => { it.groupId = id; });
+    groups.push(group);
+
+    labelEl.addEventListener('dblclick', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      renameGroup(group);
+    });
+
+    labelEl.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      createGroupMenu();
+      showGroupMenu(ev.clientX, ev.clientY, group);
+    });
+
+    labelEl.addEventListener('mousedown', ev => ev.stopPropagation());
+
+    refreshGroupVisual(group);
+    return group;
+  }
+
+  function refreshGroupVisual(group) {
+    if (!group) return;
+
+    const members = getGroupMembers(group);
+    if (members.length < 2) {
+      dissolveGroup(group, { silent: true });
+      return;
+    }
+
+    const b = getItemsBounds(members);
+    if (!b) return;
+
+    const pad = 6;
+    // 与素材一样用 transform 定位：两者走同一条合成路径，快速拖动时不会脱节
+    group.bounds = { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
+    group.frameEl.style.width = `${group.bounds.w}px`;
+    group.frameEl.style.height = `${group.bounds.h}px`;
+    group.labelEl.textContent = group.name;
+    applyGroupTransform(group, 0, 0);
+  }
+
+  // dx/dy 为拖动过程中的临时位移，避免每帧重新测量 DOM 造成的抖动
+  function applyGroupTransform(group, dx = 0, dy = 0) {
+    if (!group?.bounds) return;
+
+    const x = group.bounds.x + dx;
+    const y = group.bounds.y + dy;
+
+    group.frameEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    group.labelEl.style.transform =
+      `translate3d(${x}px, ${Math.max(0, y - 22)}px, 0)`;
+  }
+
+  function setGroupSelected(group, selected) {
+    if (!group?.frameEl) return;
+    group.frameEl.style.borderColor = selected ? '#6b7280' : '#b0b6c0';
+    group.frameEl.style.borderWidth = selected ? '1.5px' : '1px';
+    group.frameEl.style.background = selected
+      ? 'rgba(17,24,39,0.05)'
+      : 'rgba(17,24,39,0.02)';
+    group.labelEl.style.background = selected ? '#4b5563' : '#8b929e';
+  }
+
+  function selectGroup(group) {
+    selectedGroup = group || null;
+    clearSelection();
+    groups.forEach(g => setGroupSelected(g, g === selectedGroup));
+  }
+
+  function refreshAllGroupVisuals() {
+    groups.slice().forEach(refreshGroupVisual);
+  }
+
+  function renameGroup(group) {
+    if (!group) return;
+    const next = window.prompt('Name this group (e.g. "Girl and Butterfly")', group.name);
+    if (next === null) return;
+    group.name = next.trim() || group.name;
+    refreshGroupVisual(group);
+  }
+
+  function dissolveGroup(group, options = {}) {
+    if (!group) return;
+
+    getGroupMembers(group).forEach(it => { delete it.groupId; });
+    group.frameEl?.remove();
+    group.labelEl?.remove();
+    groups = groups.filter(g => g !== group);
+    if (selectedGroup === group) selectedGroup = null;
+    if (dragGroupRef === group) dragGroupRef = null;
+
+    if (!options.silent) hideGroupMenu();
+  }
+
+  function deleteGroupWithMembers(group) {
+    if (!group) return;
+    getGroupMembers(group).forEach(it => removeImageItem(it));
+    dissolveGroup(group, { silent: true });
+    hideGroupMenu();
+  }
+
+  // 以整组包围盒中心为基准缩放，保持成员之间的相对位置
+  function scaleGroupAboutCenter(group, factor) {
+    const members = getGroupMembers(group);
+    if (members.length < 2) return;
+
+    const b = getItemsBounds(members);
+    if (!b) return;
+
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+
+    members.forEach(it => {
+      const pos = getImagePosition(it.element);
+      const el = it.element;
+
+      if (it.kind === 'image') {
+        const cur = parseFloat(el.dataset.scale || '1');
+        const next = clamp(cur * factor, MIN_SCALE, MAX_SCALE);
+        el.dataset.scale = String(next);
+        el.style.width = `${100 * next}px`;
+      }
+
+      setImagePosition(el, cx + (pos.x - cx) * factor, cy + (pos.y - cy) * factor);
+    });
+
+    refreshGroupVisual(group);
+  }
+
+  function createGroupMenu() {
+    if (groupMenu) return;
+
+    groupMenu = buildStyledMenu('canvas-group-menu', [
+      { key: 'rename', label: 'Rename Group' },
+      { key: 'sep' },
+      { key: 'scale-up', label: 'Scale Up (keep layout)' },
+      { key: 'scale-down', label: 'Scale Down (keep layout)' },
+      { key: 'sep2' },
+      { key: 'ungroup', label: 'Ungroup (keep assets)' },
+      { key: 'delete', label: 'Delete Group and Assets', danger: true }
+    ], action => {
+      if (!groupMenuTarget) return;
+      handleGroupAction(groupMenuTarget, action);
+      hideGroupMenu();
+    });
+
+    document.addEventListener('click', hideGroupMenu);
+    window.addEventListener('blur', hideGroupMenu);
+    document.addEventListener('scroll', hideGroupMenu, true);
+  }
+
+  function showGroupMenu(x, y, group) {
+    if (!groupMenu) return;
+    groupMenuTarget = group;
+    positionStyledMenu(groupMenu, x, y);
+  }
+
+  function hideGroupMenu() {
+    if (!groupMenu) return;
+    groupMenu.style.display = 'none';
+    groupMenuTarget = null;
+  }
+
+  function handleGroupAction(group, action) {
+    if (action === 'rename') renameGroup(group);
+    else if (action === 'scale-up') scaleGroupAboutCenter(group, 1.15);
+    else if (action === 'scale-down') scaleGroupAboutCenter(group, 0.87);
+    else if (action === 'ungroup') dissolveGroup(group);
+    else if (action === 'delete') deleteGroupWithMembers(group);
+  }
+
+  // ---------------------------------------------------------------------
+  // 三个右键菜单共用的外观与定位，保证素材 / 取景框 / 编组样式一致
+  // ---------------------------------------------------------------------
+
+  function buildStyledMenu(domId, actions, onAction) {
+    const menu = document.createElement('div');
+    menu.id = domId;
+    menu.style.cssText = `
+      position:fixed;
+      display:none;
+      min-width:200px;
+      background:#ffffff;
+      border:1px solid #e5e7eb;
+      border-radius:8px;
+      box-shadow:0 8px 24px rgba(0,0,0,0.12);
+      padding:6px;
+      z-index:99999;
+    `;
+
+    menu.addEventListener('contextmenu', e => e.preventDefault());
+    menu.addEventListener('mousedown', e => e.stopPropagation());
+
+    actions.forEach(action => {
+      if (action.key.startsWith('sep')) {
+        const hr = document.createElement('div');
+        hr.style.cssText = 'height:1px;background:#e5e7eb;margin:4px 6px;';
+        menu.appendChild(hr);
+        return;
+      }
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.action = action.key;
+      btn.textContent = action.label;
+      btn.style.cssText = `
+        width:100%;
+        display:block;
+        border:none;
+        background:transparent;
+        text-align:left;
+        padding:8px 10px;
+        border-radius:6px;
+        cursor:pointer;
+        font-size:13px;
+        color:${action.danger ? '#dc2626' : 'inherit'};
+      `;
+      btn.onmouseenter = () => { btn.style.background = action.danger ? '#fef2f2' : '#f3f4f6'; };
+      btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+      menu.appendChild(btn);
+    });
+
+    menu.addEventListener('click', e => {
+      const action = e.target?.dataset?.action;
+      if (action) onAction(action);
+    });
+
+    document.body.appendChild(menu);
+    return menu;
+  }
+
+  function positionStyledMenu(menu, x, y) {
+    menu.style.display = 'block';
+
+    const menuW = menu.offsetWidth || 200;
+    const menuH = menu.offsetHeight || 260;
+    const left = Math.min(x, window.innerWidth - menuW - 8);
+    const top = Math.min(y, window.innerHeight - menuH - 8);
+
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+  }
+
+  // 空格键平移：按住时光标变抓手，松开恢复。输入框内不触发。
+  function isTextEntryTarget(target) {
+    if (!target) return false;
+    const tag = target.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+  }
+
+  function updateBoardCursor() {
+    if (paintMode) return;
+    if (spacePanHeld) drawingBoard.style.cursor = 'grab';
+    else if (drawSubCanvasMode) drawingBoard.style.cursor = 'crosshair';
+    else drawingBoard.style.cursor = 'default';
+  }
+
+  function bindSpacePanKeys() {
+    window.addEventListener('keydown', e => {
+      if (e.code !== 'Space' || e.repeat) return;
+      if (isTextEntryTarget(e.target)) return;
+      e.preventDefault();          // 避免页面滚动
+      spacePanHeld = true;
+      updateBoardCursor();
+    });
+
+    window.addEventListener('keyup', e => {
+      if (e.code !== 'Space') return;
+      spacePanHeld = false;
+      updateBoardCursor();
+    });
+
+    // 切走窗口时复位，避免回来后卡在平移状态
+    window.addEventListener('blur', () => {
+      spacePanHeld = false;
+      updateBoardCursor();
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // 按像素透明度命中判定（附加）
+  //
+  // 分割出来的 PNG 和手绘笔画周围都有大片透明区域。若按元素矩形判定，
+  // 用户点在看上去是空白的地方也会抓住素材，无法框选或平移。
+  // 这里改成读取该点的 alpha：透明处不视为命中，事件按空白区域处理。
+  // ---------------------------------------------------------------------
+
+  const HIT_ALPHA_THRESHOLD = 12;   // 低于此值视为透明
+  const HIT_SAMPLE_MAX = 256;       // 采样画布最长边，控制内存
+
+  function ensureHitCanvas(item) {
+    if (!item || item._hitReady || item._hitLoading) return;
+
+    // mask 类型本身就是画布，直接用
+    if (item.kind === 'mask' && item.sourceCanvas) {
+      item._hitCanvas = item.sourceCanvas;
+      item._hitCtx = item.sourceCanvas.getContext('2d', { willReadFrequently: true });
+      item._hitReady = true;
+      return;
+    }
+
+    const src = item.originalSrc || item.element?.src;
+    if (!src) return;
+
+    item._hitLoading = true;
+    loadImageAsync(src)
+      .then(img => {
+        const nw = img.naturalWidth || img.width || 1;
+        const nh = img.naturalHeight || img.height || 1;
+        const k = Math.min(1, HIT_SAMPLE_MAX / Math.max(nw, nh));
+
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(nw * k));
+        c.height = Math.max(1, Math.round(nh * k));
+
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+
+        item._hitCanvas = c;
+        item._hitCtx = ctx;
+        item._hitReady = true;
+      })
+      .catch(() => {
+        // 取不到像素（跨域等）时保持旧行为：整块矩形都可拖
+        item._hitUnavailable = true;
+      })
+      .finally(() => {
+        item._hitLoading = false;
+      });
+  }
+
+  // 返回 true 表示该点落在不透明像素上。取不到像素信息时一律返回 true，
+  // 保证降级后行为与改动前一致。
+  function isOpaqueAt(item, clientX, clientY) {
+    if (!item || item._hitUnavailable) return true;
+    if (!item._hitReady || !item._hitCtx) return true;
+
+    const scenePoint = screenToScene(clientX, clientY);
+    const pos = getImagePosition(item.element);
+    const { w, h } = getItemSize(item);
+    if (!(w > 0) || !(h > 0)) return true;
+
+    let u = (scenePoint.x - pos.x) / w;
+    let v = (scenePoint.y - pos.y) / h;
+    if (item.flipX) u = 1 - u;
+    if (item.flipY) v = 1 - v;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return false;
+
+    const cw = item._hitCanvas.width;
+    const ch = item._hitCanvas.height;
+    const px = Math.min(cw - 1, Math.max(0, Math.floor(u * cw)));
+    const py = Math.min(ch - 1, Math.max(0, Math.floor(v * ch)));
+
+    try {
+      const alpha = item._hitCtx.getImageData(px, py, 1, 1).data[3];
+      return alpha >= HIT_ALPHA_THRESHOLD;
+    } catch (_) {
+      item._hitUnavailable = true;
+      return true;
+    }
+  }
+
+  // 空白区域按下：左键框选、空格或中键平移。素材透明处也走这里。
+  function handleEmptyAreaMouseDown(e) {
+    if (drawSubCanvasMode || paintMode) return;
+    if (e.button !== 0 && e.button !== 1) return;
+
+    const wantsPan = e.button === 1 || spacePanHeld;
+
+    if (!wantsPan && e.button === 0) {
+      e.preventDefault();
+      selectGroup(null);
+      startGroupMarquee(e);
+      return;
+    }
+
+    boardPanCandidate = {
+      startMouse: { x: e.clientX, y: e.clientY },
+      startCamera: { ...camera }
+    };
+    e.preventDefault();
+  }
+
+  function startGroupMarquee(e) {
+    groupMarqueeStart = screenToScene(e.clientX, e.clientY);
+
+    groupMarqueeEl = document.createElement('div');
+    groupMarqueeEl.style.cssText = `
+      position:absolute;
+      left:${groupMarqueeStart.x}px;
+      top:${groupMarqueeStart.y}px;
+      width:0;
+      height:0;
+      border:1px dashed #9ca3af;
+      background:rgba(17,24,39,0.04);
+      border-radius:4px;
+      pointer-events:none;
+      z-index:1001;
+    `;
+    drawingScene.appendChild(groupMarqueeEl);
+  }
+
+  function finishGroupMarquee(marquee) {
+    // 与框相交的素材都算选中（不要求完全包住，手绘笔画往往会超出）
+    const hit = droppedImages.filter(it => {
+      if (it.groupId) return false;
+      const pos = getImagePosition(it.element);
+      const { w, h } = getItemSize(it);
+      const rect = { x: pos.x, y: pos.y, w, h };
+      return rectIntersectArea(rect, marquee) > 0;
+    });
+
+    if (hit.length < 2) {
+      console.warn('[Group] Fewer than 2 assets in the marquee; no group created.');
+      return;
+    }
+
+    const group = createGroupFromItems(hit);
+    if (group) {
+      renameGroup(group);
+      selectGroup(group);
     }
   }
 
@@ -1882,68 +2579,187 @@ export function initCanvasDrag() {
       activeRegionId = id;
     });
 
+    // 取景框拖拽条上的右键菜单（附加功能，与素材图层菜单同一套模式）
+    gripEl.addEventListener('contextmenu', (ev) => {
+      if (paintMode || drawSubCanvasMode) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      activeRegionId = id;
+      createRegionMenu();
+      showRegionMenu(ev.clientX, ev.clientY, item);
+    });
+
     return item;
+  }
+
+  // ---------------------------------------------------------------------
+  // 取景框右键菜单（纯附加）
+  //
+  // 设计取舍：
+  //  - 长宽比必须一致，否则关键帧剪不到一起 → 所有复制/推拉都锁定原比例
+  //  - 场景内尺寸允许不同 → 框大即远景、框小即近景，这是表达推拉镜头的手段，
+  //    不能被"统一大小"抹掉
+  //  - 重叠比例做成显式参数 → 创作者主动声明两个关键帧共享多少内容，
+  //    而不是靠拖拽碰巧叠上
+  // ---------------------------------------------------------------------
+
+  function getRegionAspect(item) {
+    return item && item.h > 0 ? item.w / item.h : 0;
+  }
+
+  function setRegionBounds(item, x, y, w, h) {
+    if (!item || !item.element) return;
+    item.x = x;
+    item.y = y;
+    item.w = w;
+    item.h = h;
+    item.element.style.left = `${x}px`;
+    item.element.style.top = `${y}px`;
+    item.element.style.width = `${w}px`;
+    item.element.style.height = `${h}px`;
+    updateDeleteHandlePosition(item);
+  }
+
+  // 按给定方向复制一个同尺寸同比例的取景框，overlap 为与原框的重叠比例（0~0.9）
+  function duplicateRegion(item, direction, overlap) {
+    if (!item) return null;
+
+    const ratio = Math.min(0.9, Math.max(0, Number(overlap) || 0));
+    const stepX = item.w * (1 - ratio);
+    const stepY = item.h * (1 - ratio);
+
+    let nx = item.x;
+    let ny = item.y;
+    if (direction === 'right') nx = item.x + stepX;
+    else if (direction === 'left') nx = item.x - stepX;
+    else if (direction === 'down') ny = item.y + stepY;
+    else if (direction === 'up') ny = item.y - stepY;
+
+    const created = createRegionBox(nx, ny, item.w, item.h);
+    activeRegionId = created?.id ?? activeRegionId;
+    return created;
+  }
+
+  // 以中心为基准缩放取景框，保持长宽比。factor < 1 为推近，> 1 为拉远
+  function scaleRegionAboutCenter(item, factor) {
+    if (!item || !Number.isFinite(factor) || factor <= 0) return;
+
+    const cx = item.x + item.w / 2;
+    const cy = item.y + item.h / 2;
+    const nw = Math.max(REGION_MIN_SIZE, item.w * factor);
+    const nh = Math.max(REGION_MIN_SIZE, item.h * factor);
+
+    setRegionBounds(item, cx - nw / 2, cy - nh / 2, nw, nh);
+  }
+
+  // 把当前取景框的尺寸对齐到第一个取景框（保持中心不动）
+  function matchRegionToFirst(item) {
+    const first = subCanvases[0];
+    if (!first || first === item) return;
+
+    const cx = item.x + item.w / 2;
+    const cy = item.y + item.h / 2;
+    setRegionBounds(item, cx - first.w / 2, cy - first.h / 2, first.w, first.h);
+  }
+
+  // 检查所有取景框长宽比是否一致，不一致时在控制台提示
+  function reportRegionAspectMismatch() {
+    if (subCanvases.length < 2) return true;
+
+    const base = getRegionAspect(subCanvases[0]);
+    if (!base) return true;
+
+    const off = subCanvases
+      .map((r, i) => ({ i, a: getRegionAspect(r) }))
+      .filter(({ a }) => a > 0 && Math.abs(a - base) / base > 0.02);
+
+    if (off.length) {
+      console.warn(
+        `[Viewport] Aspect ratios differ: viewport 1 is ${base.toFixed(3)}, ` +
+        off.map(({ i, a }) => `viewport ${i + 1} is ${a.toFixed(3)}`).join(', ') +
+        '. Keyframes with different aspect ratios cannot be cut together. ' +
+        'Use "Match Size to First Viewport" in the viewport right-click menu.'
+      );
+      return false;
+    }
+    return true;
+  }
+
+  function createRegionMenu() {
+    if (regionMenu) return;
+
+    regionMenu = buildStyledMenu('canvas-region-menu', [
+      { key: 'dup-right-50', label: 'Duplicate Right \u2014 50% overlap' },
+      { key: 'dup-right-30', label: 'Duplicate Right \u2014 30% overlap' },
+      { key: 'dup-right-0',  label: 'Duplicate Right \u2014 no overlap' },
+      { key: 'dup-down-30',  label: 'Duplicate Down \u2014 30% overlap' },
+      { key: 'sep' },
+      { key: 'push-in',      label: 'Push In (tighter shot)' },
+      { key: 'pull-out',     label: 'Pull Out (wider shot)' },
+      { key: 'match-first',  label: 'Match Size to First Viewport' },
+      { key: 'sep2' },
+      { key: 'delete',       label: 'Delete Viewport', danger: true }
+    ], action => {
+      if (!regionMenuTarget) return;
+      handleRegionAction(regionMenuTarget, action);
+      hideRegionMenu();
+    });
+
+    document.addEventListener('click', hideRegionMenu);
+    window.addEventListener('blur', hideRegionMenu);
+    document.addEventListener('scroll', hideRegionMenu, true);
+  }
+
+  function showRegionMenu(x, y, item) {
+    if (!regionMenu) return;
+    regionMenuTarget = item;
+    positionStyledMenu(regionMenu, x, y);
+  }
+
+  function hideRegionMenu() {
+    if (!regionMenu) return;
+    regionMenu.style.display = 'none';
+    regionMenuTarget = null;
+  }
+
+  function handleRegionAction(item, action) {
+    if (!item) return;
+
+    if (action === 'dup-right-50') duplicateRegion(item, 'right', 0.5);
+    else if (action === 'dup-right-30') duplicateRegion(item, 'right', 0.3);
+    else if (action === 'dup-right-0') duplicateRegion(item, 'right', 0);
+    else if (action === 'dup-down-30') duplicateRegion(item, 'down', 0.3);
+    else if (action === 'push-in') scaleRegionAboutCenter(item, 0.8);
+    else if (action === 'pull-out') scaleRegionAboutCenter(item, 1.25);
+    else if (action === 'match-first') matchRegionToFirst(item);
+    else if (action === 'delete') { removeRegionItem(item); return; }
+
+    reportRegionAspectMismatch();
   }
 
   function createLayerMenu() {
     if (layerMenu) return;
 
-    layerMenu = document.createElement('div');
-    layerMenu.id = 'canvas-layer-menu';
-    layerMenu.style.cssText = `
-      position:fixed;
-      display:none;
-      min-width:140px;
-      background:#ffffff;
-      border:1px solid #dbeafe;
-      border-radius:8px;
-      box-shadow:0 8px 24px rgba(0,0,0,0.12);
-      padding:6px;
-      z-index:99999;
-    `;
-
-    layerMenu.addEventListener('contextmenu', e => e.preventDefault());
-    layerMenu.addEventListener('mousedown', e => e.stopPropagation());
-
-    const actions = [
-      { key: 'bring-front', label: 'Bring to Front' },
-      { key: 'forward-one', label: 'Bring Forward' },
-      { key: 'backward-one', label: 'Send Backward' },
-      { key: 'send-back', label: 'Send to Back' },
+    layerMenu = buildStyledMenu('canvas-layer-menu', [
+      { key: 'bring-front',     label: 'Bring to Front' },
+      { key: 'forward-one',     label: 'Bring Forward' },
+      { key: 'backward-one',    label: 'Send Backward' },
+      { key: 'send-back',       label: 'Send to Back' },
+      { key: 'sep' },
       { key: 'flip-horizontal', label: 'Flip Horizontal' },
-      { key: 'flip-vertical', label: 'Flip Vertical' },
-      { key: 'edit-label', label: 'Edit Label' }
-    ];
-
-    actions.forEach(action => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.dataset.action = action.key;
-      btn.textContent = action.label;
-      btn.style.cssText = `
-        width:100%;
-        display:block;
-        border:none;
-        background:transparent;
-        text-align:left;
-        padding:8px 10px;
-        border-radius:6px;
-        cursor:pointer;
-        font-size:13px;
-      `;
-      btn.onmouseenter = () => { btn.style.background = '#eff6ff'; };
-      btn.onmouseleave = () => { btn.style.background = 'transparent'; };
-      layerMenu.appendChild(btn);
-    });
-
-    layerMenu.addEventListener('click', e => {
-      const action = e.target?.dataset?.action;
-      if (!action || !layerMenuTarget) return;
+      { key: 'flip-vertical',   label: 'Flip Vertical' },
+      { key: 'edit-label',      label: 'Edit Label' },
+      { key: 'sep2' },
+      { key: 'group-selected',  label: 'Group with Selection\u2026' },
+      { key: 'ungroup',         label: 'Ungroup' },
+      { key: 'sep3' },
+      { key: 'delete',          label: 'Delete Asset', danger: true }
+    ], action => {
+      if (!layerMenuTarget) return;
       handleLayerAction(layerMenuTarget, action);
       hideLayerMenu();
     });
 
-    document.body.appendChild(layerMenu);
     document.addEventListener('click', hideLayerMenu);
     window.addEventListener('blur', hideLayerMenu);
     document.addEventListener('scroll', hideLayerMenu, true);
@@ -1954,16 +2770,7 @@ export function initCanvasDrag() {
 
     layerMenuTarget = item;
     selectItem(item);
-
-    layerMenu.style.display = 'block';
-
-    const menuW = layerMenu.offsetWidth || 140;
-    const menuH = layerMenu.offsetHeight || 180;
-    const left = Math.min(x, window.innerWidth - menuW - 8);
-    const top = Math.min(y, window.innerHeight - menuH - 8);
-
-    layerMenu.style.left = `${Math.max(8, left)}px`;
-    layerMenu.style.top = `${Math.max(8, top)}px`;
+    positionStyledMenu(layerMenu, x, y);
   }
 
   function hideLayerMenu() {
@@ -2023,8 +2830,32 @@ export function initCanvasDrag() {
       return;
     }
 
+    // --- 编组相关（附加） ---
+    if (action === 'group-selected') {
+      const existing = getGroupOfItem(item);
+      if (existing) {
+        window.alert('This asset already belongs to a group. Ungroup it first.');
+        return;
+      }
+      window.alert('Use the Select tool and drag a marquee around the assets you want to group.');
+      return;
+    }
+
+    if (action === 'ungroup') {
+      const group = getGroupOfItem(item);
+      if (group) dissolveGroup(group);
+      return;
+    }
+
+    if (action === 'delete') {
+      const group = getGroupOfItem(item);
+      removeImageItem(item);
+      if (group) refreshGroupVisual(group);
+      return;
+    }
+
     if (action === 'edit-label') {
-      const text = prompt('请输入图片语义标注', item.label || '');
+      const text = prompt('Label this asset', item.label || '');
       if (text !== null) {
         setItemLabel(item, text);
       }
@@ -2120,7 +2951,7 @@ export function initCanvasDrag() {
         ctx.drawImage(renderable, 0, 0, drawW, drawH);
       }
     } catch (err) {
-      console.error('导出图片处理失败:', err);
+      console.error('Failed to render item during export:', err);
     }
 
     ctx.restore();
@@ -2225,6 +3056,8 @@ export function initCanvasDrag() {
     const regionRect = getRegionSceneRect(region);
 
     return droppedImages
+      // 已编组的素材代表用户刻意摆好的空间关系，移动取景框时不应打乱它们
+      .filter(item => !item.groupId)
       .filter(item => {
         const imageRect = getImageSceneRect(item);
         const overlapArea = rectIntersectionArea(imageRect, regionRect);
@@ -2371,7 +3204,8 @@ export function initCanvasDrag() {
     if (subCanvases.length > 0) {
       for (let i = 0; i < subCanvases.length; i++) {
         const clip = getClipFromRegion(subCanvases[i]);
-        await exportSingleClip(type, clip, i, options);
+        // 第五个参数为该取景框在场景坐标系里的原始 region（可选，仅用于构图记录）
+        await exportSingleClip(type, clip, i, options, subCanvases[i]);
       }
       return;
     }
@@ -2383,10 +3217,10 @@ export function initCanvasDrag() {
       h: drawingBoard.offsetHeight
     };
 
-    await exportSingleClip(type, fullClip, null, options);
+    await exportSingleClip(type, fullClip, null, options, null);
   }
 
-  async function exportSingleClip(type, clip, index = null, options = {}) {
+  async function exportSingleClip(type, clip, index = null, options = {}, region = null) {
     const { c, ctx, scale } = createExportCanvas(clip);
 
     const finish = (filename, previewText) => {
@@ -2398,7 +3232,14 @@ export function initCanvasDrag() {
         download(url, `${filename}${suffix}_${Date.now()}.png`);
       }
       if (options.emitToBuffer) {
-        emitExportToBuffer(url, label, clip, type, index);
+        let composition = null;
+        try {
+          composition = buildCompositionRecord(clip, type, index, region);
+        } catch (err) {
+          // 构图记录是附加能力，失败不应影响导出本身
+          console.warn('Failed to build composition record; skipped.', err);
+        }
+        emitExportToBuffer(url, label, clip, type, index, composition);
       }
     };
 
@@ -2447,7 +3288,113 @@ export function initCanvasDrag() {
 
   }
 
-  function emitExportToBuffer(url, previewText, clip, type, index = null) {
+  // ---------------------------------------------------------------------
+  // 构图记录（纯附加）
+  //
+  // 导出取景框时，除了那张拍平的 PNG，额外记录：这个取景框在场景里的位置、
+  // 框内有哪些部件、各自在哪、第几层、来自哪个实体文件。
+  // 有了它，两个关键帧共享了哪些部件（也就是它们的交集）可以被直接算出来。
+  //
+  // 所有输出都是新增字段，既有消费方按 key 取值，不受影响。
+  // ---------------------------------------------------------------------
+
+  // 屏幕坐标的 clip 反算回场景坐标
+  function clipToSceneRect(clip) {
+    const scale = camera.scale || 1;
+    return {
+      x: (clip.x - camera.x) / scale,
+      y: (clip.y - camera.y) / scale,
+      w: clip.w / scale,
+      h: clip.h / scale
+    };
+  }
+
+  // 部件在场景坐标下的矩形（与 drawExportItem 使用同一套取值方式）
+  function getItemSceneRect(item) {
+    const pos = getImagePosition(item.element);
+    const { w, h } = getItemSize(item);
+    return { x: pos.x, y: pos.y, w, h };
+  }
+
+  function rectIntersectArea(a, b) {
+    const left = Math.max(a.x, b.x);
+    const top = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.w, b.x + b.w);
+    const bottom = Math.min(a.y + a.h, b.y + b.h);
+    if (right <= left || bottom <= top) return 0;
+    return (right - left) * (bottom - top);
+  }
+
+  // 从素材 URL 里取出实体文件名，例如
+  //   /view?filename=dog_merged_0347c5.png&subfolder=entities  -> dog_merged_0347c5.png
+  //   entities/dog_merged_0347c5.png                           -> dog_merged_0347c5.png
+  function extractEntityRef(src) {
+    if (!src || typeof src !== 'string') return null;
+    const byQuery = src.match(/[?&]filename=([^&]+)/);
+    if (byQuery) {
+      try { return decodeURIComponent(byQuery[1]); } catch (_) { return byQuery[1]; }
+    }
+    const parts = src.split('?')[0].split('/');
+    const last = parts[parts.length - 1];
+    return last || null;
+  }
+
+  // 生成一个取景框的构图记录
+  function buildCompositionRecord(clip, type, index, region) {
+    const viewport = region
+      ? { x: region.x, y: region.y, w: region.w, h: region.h }
+      : clipToSceneRect(clip);
+
+    const items = getSortedItems().map(item => {
+      const rect = getItemSceneRect(item);
+      const area = rect.w * rect.h;
+      const inside = rectIntersectArea(rect, viewport);
+
+      return {
+        itemId: item.id,
+        kind: item.kind,
+        label: item.label || '',
+        entityRef: item.kind === 'mask' ? null : extractEntityRef(item.originalSrc),
+        sourceUrl: item.kind === 'mask' ? null : (item.originalSrc || null),
+        zIndex: item.zIndex,
+        flipX: !!item.flipX,
+        flipY: !!item.flipY,
+        sceneRect: rect,
+        // 相对取景框的归一化坐标，便于跨分辨率比较
+        rectInViewport: viewport.w > 0 && viewport.h > 0
+          ? {
+              x: (rect.x - viewport.x) / viewport.w,
+              y: (rect.y - viewport.y) / viewport.h,
+              w: rect.w / viewport.w,
+              h: rect.h / viewport.h
+            }
+          : null,
+        visible: inside > 0,
+        coverage: area > 0 ? inside / area : 0
+      };
+    });
+
+    const visibleItems = items.filter(it => it.visible);
+
+    return {
+      schemaVersion: 1,
+      sceneSessionId,
+      viewportIndex: index,
+      exportType: type,
+      // 取景框在场景坐标系里的位置。同一 sceneSessionId 下的多个取景框
+      // 可以直接做矩形相交，得到关键帧之间的重叠区域。
+      viewportSceneRect: viewport,
+      cameraAtExport: { x: camera.x, y: camera.y, scale: camera.scale },
+      boardSize: { w: drawingBoard.offsetWidth, h: drawingBoard.offsetHeight },
+      itemCount: items.length,
+      visibleItemCount: visibleItems.length,
+      visibleItemIds: visibleItems.map(it => it.itemId),
+      visibleEntityRefs: visibleItems.map(it => it.entityRef).filter(Boolean),
+      items
+    };
+  }
+
+  function emitExportToBuffer(url, previewText, clip, type, index = null, composition = null) {
     const suffix = index !== null ? `_${index + 1}` : '';
     const ts = Date.now();
 
@@ -2470,11 +3417,33 @@ export function initCanvasDrag() {
       createdAt: ts
     };
 
+    // 新增字段：不影响既有消费方
+    if (composition) {
+      bufferClip.composition = composition;
+      bufferClip.sceneSessionId = composition.sceneSessionId;
+      bufferClip.viewportIndex = composition.viewportIndex;
+      bufferClip.viewportSceneRect = composition.viewportSceneRect;
+    }
+
     window.dispatchEvent(
       new CustomEvent('canvas-export-to-buffer', {
         detail: { clips: [bufferClip] }
       })
     );
+
+    // 独立事件：任何想记录构图的地方都可以监听，不必改动 buffer 链路。
+    // 目前没有监听者时为空操作。
+    if (composition) {
+      window.dispatchEvent(
+        new CustomEvent('canvas-composition-record', {
+          detail: {
+            bufferNodeId: bufferClip.nodeId,
+            imageUrl: url,
+            composition
+          }
+        })
+      );
+    }
   }
 
   function download(url, name) {
@@ -2644,9 +3613,11 @@ export function initCanvasDrag() {
     const exportCompositeBtn = document.getElementById('export-composite-btn');
 
     if (selectBtn) {
+      selectBtn.title = 'Select — drag on empty canvas to marquee-select and group assets. Hold Space (or use the middle mouse button) to pan.';
       selectBtn.onclick = () => {
         deactivateRegionMode();
         deactivatePaintMode();
+        updateBoardCursor();
         syncToolbarState();
       };
     }
@@ -2856,6 +3827,7 @@ export function initCanvasDrag() {
 
     droppedImages.push(item);
     applyItemVisualLayer(item);
+    ensureHitCanvas(item);
     syncBoardContentState();
 
     const pos = clampImagePosition(img, x, y);
@@ -2913,6 +3885,7 @@ export function initCanvasDrag() {
 
     droppedImages.push(item);
     applyItemVisualLayer(item);
+    ensureHitCanvas(item);
     setSceneItemPosition(item, x, y);
     bindSceneItemInteractions(item);
     normalizeLayerOrder();
@@ -2960,7 +3933,7 @@ export function initCanvasDrag() {
 
     const data = extractDragData(e);
     if (!data || !data.url) {
-      console.warn('drop 没拿到有效图片地址', e.dataTransfer?.types);
+      console.warn('Drop did not yield a usable image URL.', e.dataTransfer?.types);
       return;
     }
 
@@ -2970,7 +3943,7 @@ export function initCanvasDrag() {
 
     const resolvedUrl = resolveDroppedImageUrl(data);
     if (!resolvedUrl) {
-      console.error('无有效图片地址:', data);
+      console.error('No usable image URL:', data);
       return;
     }
 
@@ -2980,7 +3953,7 @@ export function initCanvasDrag() {
       applyBoardCamera();
     };
     img.onerror = () => {
-      console.error('图片加载失败:', resolvedUrl);
+      console.error('Image failed to load:', resolvedUrl);
     };
     img.src = resolvedUrl;
   });
@@ -3016,40 +3989,62 @@ export function initCanvasDrag() {
       if (!tempDrawRect) return;
 
       const scenePoint = screenToScene(e.clientX, e.clientY);
-      const x = scenePoint.x;
-      const y = scenePoint.y;
-      const l = Math.min(subCanvasStart.x, x);
-      const t = Math.min(subCanvasStart.y, y);
-      const w = Math.abs(x - subCanvasStart.x);
-      const h = Math.abs(y - subCanvasStart.y);
+      // 按住 Alt 临时关闭比例吸附，允许自由画
+      const rect = e.altKey
+        ? (() => {
+            const w = Math.abs(scenePoint.x - subCanvasStart.x);
+            const h = Math.abs(scenePoint.y - subCanvasStart.y);
+            return {
+              l: Math.min(subCanvasStart.x, scenePoint.x),
+              t: Math.min(subCanvasStart.y, scenePoint.y),
+              w,
+              h,
+              snapped: false,
+              label: h > 0 ? `${(w / h).toFixed(2)}:1` : ''
+            };
+          })()
+        : snapRectToAspect(subCanvasStart.x, subCanvasStart.y, scenePoint.x, scenePoint.y);
 
-      tempDrawRect.style.left = `${l}px`;
-      tempDrawRect.style.top = `${t}px`;
-      tempDrawRect.style.width = `${w}px`;
-      tempDrawRect.style.height = `${h}px`;
+      tempDrawRect.style.left = `${rect.l}px`;
+      tempDrawRect.style.top = `${rect.t}px`;
+      tempDrawRect.style.width = `${rect.w}px`;
+      tempDrawRect.style.height = `${rect.h}px`;
+
+      updateAspectFeedback(rect);
+      lastRegionDrawRect = rect;
     });
 
     drawingBoard.addEventListener('mouseup', e => {
       if (!tempDrawRect) return;
 
       const scenePoint = screenToScene(e.clientX, e.clientY);
-      const x = scenePoint.x;
-      const y = scenePoint.y;
-      const l = Math.min(subCanvasStart.x, x);
-      const t = Math.min(subCanvasStart.y, y);
-      const w = Math.abs(x - subCanvasStart.x);
-      const h = Math.abs(y - subCanvasStart.y);
+      const rect = e.altKey
+        ? (() => {
+            const w = Math.abs(scenePoint.x - subCanvasStart.x);
+            const h = Math.abs(scenePoint.y - subCanvasStart.y);
+            return {
+              l: Math.min(subCanvasStart.x, scenePoint.x),
+              t: Math.min(subCanvasStart.y, scenePoint.y),
+              w,
+              h
+            };
+          })()
+        : snapRectToAspect(subCanvasStart.x, subCanvasStart.y, scenePoint.x, scenePoint.y);
 
-      if (w < 50 || h < 50) {
+      hideAspectFeedback();
+      lastRegionDrawRect = null;
+
+      if (rect.w < 50 || rect.h < 50) {
         drawingScene.removeChild(tempDrawRect);
         tempDrawRect = null;
         return;
       }
 
-      createRegionBox(l, t, w, h);
+      createRegionBox(rect.l, rect.t, rect.w, rect.h);
       drawingScene.removeChild(tempDrawRect);
       tempDrawRect = null;
       drawingBoard.style.cursor = 'crosshair';
+      reportRegionAspectMismatch();
     });
 
     document.addEventListener('mousemove', e => {
@@ -3064,6 +4059,16 @@ export function initCanvasDrag() {
           draggingImg = dragCandidate.img;
           dragStartMouse = { ...dragCandidate.startMouse };
           dragStartPos = { ...dragCandidate.startPos };
+
+          // 若被拖的素材属于某个编组，记下同组其它成员的起始位置，一起移动
+          const draggedItem = getItemByElement(draggingImg);
+          const group = getGroupOfItem(draggedItem);
+          dragGroupRef = group || null;
+          dragGroupSiblings = group
+            ? getGroupMembers(group)
+                .filter(it => it !== draggedItem)
+                .map(it => ({ item: it, startPos: getImagePosition(it.element) }))
+            : null;
 
           document.body.style.userSelect = 'none';
           document.body.style.webkitUserSelect = 'none';
@@ -3158,6 +4163,15 @@ export function initCanvasDrag() {
       dragRAF = requestAnimationFrame(() => {
         if (draggingImg && pendingDragPos) {
           setImagePosition(draggingImg, pendingDragPos.x, pendingDragPos.y);
+
+          // 同组成员按相同位移跟随，保持它们之间的相对位置
+          if (dragGroupSiblings) {
+            dragGroupSiblings.forEach(({ item, startPos }) => {
+              setImagePosition(item.element, startPos.x + dx, startPos.y + dy);
+            });
+            // 外框按同一位移平移即可，不必重新测量，避免拖动中的抖动与拖影
+            if (dragGroupRef) applyGroupTransform(dragGroupRef, dx, dy);
+          }
         }
         dragRAF = null;
       });
@@ -3173,6 +4187,14 @@ export function initCanvasDrag() {
         draggingImg.style.pointerEvents = 'auto';
         draggingImg.style.cursor = 'grab';
       }
+
+      // 拖动过程中外框只是临时平移，结束后按成员实际位置重新测量一次
+      if (dragGroupRef) {
+        refreshGroupVisual(dragGroupRef);
+        setGroupSelected(dragGroupRef, dragGroupRef === selectedGroup);
+        dragGroupRef = null;
+      }
+      dragGroupSiblings = null;
 
       if (draggingRegion?.gripEl) {
         draggingRegion.gripEl.style.cursor = 'grab';
@@ -3263,17 +4285,42 @@ export function initCanvasDrag() {
         e.target === maskCanvas;
 
       if (!isEmptyTarget) return;
-      if (drawSubCanvasMode || paintMode) return;
-      if (e.button !== 0 && e.button !== 1) return;
+      handleEmptyAreaMouseDown(e);
+    });
 
-      boardPanCandidate = {
-        startMouse: { x: e.clientX, y: e.clientY },
-        startCamera: { ...camera }
+    // --- 编组框选的拖拽流程（附加） ---
+
+    document.addEventListener('mousemove', e => {
+      if (!groupMarqueeEl || !groupMarqueeStart) return;
+      const p = screenToScene(e.clientX, e.clientY);
+      const l = Math.min(groupMarqueeStart.x, p.x);
+      const t = Math.min(groupMarqueeStart.y, p.y);
+      const w = Math.abs(p.x - groupMarqueeStart.x);
+      const h = Math.abs(p.y - groupMarqueeStart.y);
+
+      groupMarqueeEl.style.left = `${l}px`;
+      groupMarqueeEl.style.top = `${t}px`;
+      groupMarqueeEl.style.width = `${w}px`;
+      groupMarqueeEl.style.height = `${h}px`;
+    });
+
+    document.addEventListener('mouseup', e => {
+      if (!groupMarqueeEl || !groupMarqueeStart) return;
+
+      const p = screenToScene(e.clientX, e.clientY);
+      const marquee = {
+        x: Math.min(groupMarqueeStart.x, p.x),
+        y: Math.min(groupMarqueeStart.y, p.y),
+        w: Math.abs(p.x - groupMarqueeStart.x),
+        h: Math.abs(p.y - groupMarqueeStart.y)
       };
 
-      if (e.button === 1) {
-        e.preventDefault();
-      }
+      groupMarqueeEl.remove();
+      groupMarqueeEl = null;
+      groupMarqueeStart = null;
+
+      if (marquee.w < 20 || marquee.h < 20) return;
+      finishGroupMarquee(marquee);
     });
 
     drawingBoard.addEventListener('wheel', e => {
@@ -3335,6 +4382,7 @@ export function initCanvasDrag() {
     bindToolbarControls();
     createLayerMenu();
     bindClearButton();
+    bindSpacePanKeys();
   }
 
   initMaskCanvas();

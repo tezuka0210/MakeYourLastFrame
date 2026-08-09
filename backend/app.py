@@ -2334,7 +2334,49 @@ def download_database():
         )
     except FileNotFoundError:
         return jsonify({"error": "数据库文件未找到!"}), 404
- 
+
+
+# --- 构图记录接口（附加功能，独立于既有流程） ---
+
+@app.route('/api/composition/record', methods=['POST'])
+def api_composition_record():
+    """
+    记录一次画布取景框导出的构图。
+    前端监听 canvas-composition-record 事件后调用即可，失败不影响导出本身。
+    """
+    payload = request.get_json(silent=True) or {}
+    if not payload.get('composition'):
+        return jsonify({"error": "缺少 composition 字段"}), 400
+
+    record_id = database.add_composition_record(payload)
+    if not record_id:
+        return jsonify({"error": "保存失败"}), 500
+    return jsonify({"record_id": record_id}), 200
+
+
+@app.route('/api/composition/records', methods=['GET'])
+def api_composition_records():
+    """按 scene_session_id 或 tree_id 查询构图记录。"""
+    scene_session_id = request.args.get('scene_session_id')
+    tree_id = request.args.get('tree_id', type=int)
+    return jsonify(database.get_composition_records(
+        scene_session_id=scene_session_id,
+        tree_id=tree_id
+    )), 200
+
+
+@app.route('/api/composition/intersections', methods=['GET'])
+def api_composition_intersections():
+    """
+    计算同一场景会话下，各取景框两两之间共享了哪些部件、几何重叠多少。
+    这就是「两个关键帧的交集」的量化结果。
+    """
+    scene_session_id = request.args.get('scene_session_id')
+    if not scene_session_id:
+        return jsonify({"error": "缺少 scene_session_id"}), 400
+    return jsonify(database.compute_viewport_intersections(scene_session_id)), 200
+
+
 # --- 4. 启动应用 ---
 
 if __name__ == '__main__':

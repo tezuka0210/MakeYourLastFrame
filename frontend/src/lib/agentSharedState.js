@@ -14,7 +14,7 @@ let _prevAgentContext = {};
 export function setPrevAgentContext(context) {
   // 深拷贝，避免外部修改原对象（防止引用冲突）
   _prevAgentContext = { ...context };
-  console.log('Agent 上下文已存储：', _prevAgentContext);
+  console.log('Agent context stored:', _prevAgentContext);
 }
 
 /**
@@ -30,5 +30,5 @@ export function getPrevAgentContext() {
  */
 export function clearPrevAgentContext() {
   _prevAgentContext = {};
-  console.log('Agent 上下文已清空');
+  console.log('Agent context cleared');
 }
