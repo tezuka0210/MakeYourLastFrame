@@ -91,6 +91,9 @@ export function initCanvasDrag() {
 
   let regionDragAttachedImages = [];
   let regionDragMaskState = null;
+  let regionOverlapFeedbackEl = null;
+  let regionAlignmentGuideX = null;
+  let regionAlignmentGuideY = null;
 
   let boardPanCandidate = null;
   let boardPanActive = false;
@@ -154,6 +157,7 @@ export function initCanvasDrag() {
   ];
   // 相对误差在此范围内就吸附
   const ASPECT_SNAP_TOLERANCE = 0.05;
+  const KEYFRAME_DUPLICATE_GAP = 24;
 
   let lastDragData = null;
   let boardDragDepth = 0;
@@ -2412,12 +2416,12 @@ export function initCanvasDrag() {
     }
   }
 
-  // 空白区域按下：左键框选、空格或中键平移。素材透明处也走这里。
+  // 空白区域按下：左键框选；Ctrl/Command、空格或中键平移。素材透明处也走这里。
   function handleEmptyAreaMouseDown(e) {
     if (drawSubCanvasMode || paintMode) return;
     if (e.button !== 0 && e.button !== 1) return;
 
-    const wantsPan = e.button === 1 || spacePanHeld;
+    const wantsPan = e.button === 1 || e.ctrlKey || e.metaKey || spacePanHeld;
 
     if (!wantsPan && e.button === 0) {
       e.preventDefault();
@@ -2620,13 +2624,172 @@ export function initCanvasDrag() {
     updateDeleteHandlePosition(item);
   }
 
-  // 按给定方向复制一个同尺寸同比例的取景框，overlap 为与原框的重叠比例（0~0.9）
+  function ensureRegionOverlapFeedback() {
+    if (regionOverlapFeedbackEl) return regionOverlapFeedbackEl;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:absolute;
+      display:none;
+      pointer-events:none;
+      z-index:1002;
+      background:rgba(100,116,139,0.2);
+      box-shadow:inset 0 0 0 1px rgba(71,85,105,0.5);
+    `;
+
+    const label = document.createElement('div');
+    label.style.cssText = `
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-50%);
+      padding:3px 7px;
+      border-radius:999px;
+      background:rgba(55,65,81,0.92);
+      color:#ffffff;
+      font-size:11px;
+      font-weight:700;
+      line-height:1.2;
+      white-space:nowrap;
+      box-shadow:0 2px 8px rgba(15,23,42,0.2);
+    `;
+    overlay.appendChild(label);
+    drawingScene.appendChild(overlay);
+    regionOverlapFeedbackEl = overlay;
+    return overlay;
+  }
+
+  function hideRegionOverlapFeedback() {
+    if (regionOverlapFeedbackEl) regionOverlapFeedbackEl.style.display = 'none';
+  }
+
+  function ensureRegionAlignmentGuides() {
+    const createGuide = () => {
+      const guide = document.createElement('div');
+      guide.style.cssText = `
+        position:absolute;
+        display:none;
+        pointer-events:none;
+        z-index:1003;
+        background:rgba(75,85,99,0.62);
+      `;
+      drawingScene.appendChild(guide);
+      return guide;
+    };
+
+    if (!regionAlignmentGuideX) regionAlignmentGuideX = createGuide();
+    if (!regionAlignmentGuideY) regionAlignmentGuideY = createGuide();
+  }
+
+  function hideRegionAlignmentGuides() {
+    if (regionAlignmentGuideX) regionAlignmentGuideX.style.display = 'none';
+    if (regionAlignmentGuideY) regionAlignmentGuideY.style.display = 'none';
+  }
+
+  function alignDraggedRegion(item, x, y) {
+    const threshold = 7 / Math.max(camera.scale, 0.01);
+    let bestX = null;
+    let bestY = null;
+
+    const movingX = [x, x + item.w / 2, x + item.w];
+    const movingY = [y, y + item.h / 2, y + item.h];
+
+    subCanvases.forEach(other => {
+      if (other === item) return;
+
+      const targetX = [other.x, other.x + other.w / 2, other.x + other.w];
+      const targetY = [other.y, other.y + other.h / 2, other.y + other.h];
+
+      movingX.forEach(source => targetX.forEach(target => {
+        const delta = target - source;
+        if (Math.abs(delta) <= threshold && (!bestX || Math.abs(delta) < Math.abs(bestX.delta))) {
+          bestX = { delta, coordinate: target };
+        }
+      }));
+
+      movingY.forEach(source => targetY.forEach(target => {
+        const delta = target - source;
+        if (Math.abs(delta) <= threshold && (!bestY || Math.abs(delta) < Math.abs(bestY.delta))) {
+          bestY = { delta, coordinate: target };
+        }
+      }));
+    });
+
+    ensureRegionAlignmentGuides();
+    const span = 8000;
+
+    if (bestX) {
+      regionAlignmentGuideX.style.display = 'block';
+      regionAlignmentGuideX.style.left = `${bestX.coordinate}px`;
+      regionAlignmentGuideX.style.top = `${-span / 2}px`;
+      regionAlignmentGuideX.style.width = '1px';
+      regionAlignmentGuideX.style.height = `${span}px`;
+    } else {
+      regionAlignmentGuideX.style.display = 'none';
+    }
+
+    if (bestY) {
+      regionAlignmentGuideY.style.display = 'block';
+      regionAlignmentGuideY.style.left = `${-span / 2}px`;
+      regionAlignmentGuideY.style.top = `${bestY.coordinate}px`;
+      regionAlignmentGuideY.style.width = `${span}px`;
+      regionAlignmentGuideY.style.height = '1px';
+    } else {
+      regionAlignmentGuideY.style.display = 'none';
+    }
+
+    return {
+      x: x + (bestX?.delta || 0),
+      y: y + (bestY?.delta || 0)
+    };
+  }
+
+  function updateRegionOverlapFeedback(item) {
+    if (!item || !(item.w > 0) || !(item.h > 0)) {
+      hideRegionOverlapFeedback();
+      return;
+    }
+
+    let best = null;
+    subCanvases.forEach(other => {
+      if (other === item) return;
+
+      const left = Math.max(item.x, other.x);
+      const top = Math.max(item.y, other.y);
+      const right = Math.min(item.x + item.w, other.x + other.w);
+      const bottom = Math.min(item.y + item.h, other.y + other.h);
+      const w = right - left;
+      const h = bottom - top;
+      if (w <= 0 || h <= 0) return;
+
+      const area = w * h;
+      if (!best || area > best.area) best = { left, top, w, h, area };
+    });
+
+    if (!best) {
+      hideRegionOverlapFeedback();
+      return;
+    }
+
+    const overlay = ensureRegionOverlapFeedback();
+    const percentage = Math.min(100, (best.area / (item.w * item.h)) * 100);
+    overlay.style.display = 'block';
+    overlay.style.left = `${best.left}px`;
+    overlay.style.top = `${best.top}px`;
+    overlay.style.width = `${best.w}px`;
+    overlay.style.height = `${best.h}px`;
+    overlay.firstElementChild.textContent = `${percentage.toFixed(1)}% overlap`;
+  }
+
+  // 按给定方向复制一个同尺寸同比例的取景框，overlap 为与原框的重叠比例（0~0.9）。
+  // no-overlap 布局额外留出间距，避免两个关键帧边框贴在一起。
   function duplicateRegion(item, direction, overlap) {
     if (!item) return null;
 
     const ratio = Math.min(0.9, Math.max(0, Number(overlap) || 0));
-    const stepX = item.w * (1 - ratio);
-    const stepY = item.h * (1 - ratio);
+    const gap = ratio === 0 ? KEYFRAME_DUPLICATE_GAP : 0;
+    const stepX = item.w * (1 - ratio) + gap;
+    const stepY = item.h * (1 - ratio) + gap;
 
     let nx = item.x;
     let ny = item.y;
@@ -2689,9 +2852,9 @@ export function initCanvasDrag() {
     if (regionMenu) return;
 
     regionMenu = buildStyledMenu('canvas-region-menu', [
-      { key: 'dup-right-50', label: 'Duplicate Right \u2014 50% overlap' },
-      { key: 'dup-right-30', label: 'Duplicate Right \u2014 30% overlap' },
       { key: 'dup-right-0',  label: 'Duplicate Right \u2014 no overlap' },
+      { key: 'dup-down-0',   label: 'Duplicate Down \u2014 no overlap' },
+      { key: 'dup-right-30', label: 'Duplicate Right \u2014 30% overlap' },
       { key: 'dup-down-30',  label: 'Duplicate Down \u2014 30% overlap' },
       { key: 'sep' },
       { key: 'push-in',      label: 'Push In (tighter shot)' },
@@ -2725,9 +2888,9 @@ export function initCanvasDrag() {
   function handleRegionAction(item, action) {
     if (!item) return;
 
-    if (action === 'dup-right-50') duplicateRegion(item, 'right', 0.5);
+    if (action === 'dup-right-0') duplicateRegion(item, 'right', 0);
+    else if (action === 'dup-down-0') duplicateRegion(item, 'down', 0);
     else if (action === 'dup-right-30') duplicateRegion(item, 'right', 0.3);
-    else if (action === 'dup-right-0') duplicateRegion(item, 'right', 0);
     else if (action === 'dup-down-30') duplicateRegion(item, 'down', 0.3);
     else if (action === 'push-in') scaleRegionAboutCenter(item, 0.8);
     else if (action === 'pull-out') scaleRegionAboutCenter(item, 1.25);
@@ -3613,7 +3776,7 @@ export function initCanvasDrag() {
     const exportCompositeBtn = document.getElementById('export-composite-btn');
 
     if (selectBtn) {
-      selectBtn.title = 'Select — drag on empty canvas to marquee-select and group assets. Hold Space (or use the middle mouse button) to pan.';
+      selectBtn.title = 'Select — drag on empty canvas to marquee-select and group assets. Hold Ctrl/Command or Space (or use the middle mouse button) to pan.';
       selectBtn.onclick = () => {
         deactivateRegionMode();
         deactivatePaintMode();
@@ -3732,6 +3895,8 @@ export function initCanvasDrag() {
 
     btn.onclick = () => {
       destroyActiveColorPicker();
+      hideRegionOverlapFeedback();
+      hideRegionAlignmentGuides();
       clearMaskRegionDragState(regionDragMaskState);
       regionDragMaskState = null;
       regionDragAttachedImages = [];
@@ -4011,6 +4176,7 @@ export function initCanvasDrag() {
       tempDrawRect.style.height = `${rect.h}px`;
 
       updateAspectFeedback(rect);
+      updateRegionOverlapFeedback({ x: rect.l, y: rect.t, w: rect.w, h: rect.h });
       lastRegionDrawRect = rect;
     });
 
@@ -4032,6 +4198,7 @@ export function initCanvasDrag() {
         : snapRectToAspect(subCanvasStart.x, subCanvasStart.y, scenePoint.x, scenePoint.y);
 
       hideAspectFeedback();
+      hideRegionOverlapFeedback();
       lastRegionDrawRect = null;
 
       if (rect.w < 50 || rect.h < 50) {
@@ -4043,8 +4210,10 @@ export function initCanvasDrag() {
       createRegionBox(rect.l, rect.t, rect.w, rect.h);
       drawingScene.removeChild(tempDrawRect);
       tempDrawRect = null;
-      drawingBoard.style.cursor = 'crosshair';
       reportRegionAspectMismatch();
+
+      // 单次画框完成后回到 Select；触发真实按钮点击以同步 Vue 高亮和画布内部状态。
+      document.getElementById('tool-select-btn')?.click();
     });
 
     document.addEventListener('mousemove', e => {
@@ -4121,13 +4290,20 @@ export function initCanvasDrag() {
       }
 
       if (draggingRegion) {
-        const dx = (e.clientX - regionDragStartMouse.x) / camera.scale;
-        const dy = (e.clientY - regionDragStartMouse.y) / camera.scale;
+        const pointerDx = (e.clientX - regionDragStartMouse.x) / camera.scale;
+        const pointerDy = (e.clientY - regionDragStartMouse.y) / camera.scale;
+        const aligned = alignDraggedRegion(
+          draggingRegion,
+          regionDragStartPos.x + pointerDx,
+          regionDragStartPos.y + pointerDy
+        );
+        const dx = aligned.x - regionDragStartPos.x;
+        const dy = aligned.y - regionDragStartPos.y;
 
         setRegionPosition(
           draggingRegion,
-          regionDragStartPos.x + dx,
-          regionDragStartPos.y + dy
+          aligned.x,
+          aligned.y
         );
 
         regionDragAttachedImages.forEach(({ item, startPos }) => {
@@ -4141,6 +4317,8 @@ export function initCanvasDrag() {
         if (regionDragMaskState) {
           updateMaskRegionPreview(regionDragMaskState, draggingRegion);
         }
+
+        updateRegionOverlapFeedback(draggingRegion);
 
         return;
       }
@@ -4205,6 +4383,8 @@ export function initCanvasDrag() {
       }
 
       clearMaskRegionDragState(regionDragMaskState);
+      hideRegionOverlapFeedback();
+      hideRegionAlignmentGuides();
 
       drawingBoard.classList.remove('is-panning');
       document.body.style.userSelect = '';

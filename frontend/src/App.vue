@@ -206,7 +206,7 @@ const stitchResultUrl = ref<string | null>(null)
 const appShellRef = ref<HTMLElement | null>(null)
 const topWorkspaceRef = ref<HTMLElement | null>(null)
 
-const leftPaneRatio = ref(0.38)
+const leftPaneRatio = ref(0.5)
 const topPaneRatio = ref(0.64)
 
 const resizingMode = ref<'vertical' | 'horizontal' | null>(null)

@@ -71,9 +71,9 @@ A single scene canvas, larger than any one frame, is where assets are recomposed
 
 Keyframes are not composed one at a time. You build one over-complete scene and then cut multiple viewports out of it. Overlapping viewports share content by construction, which is what makes consecutive keyframes read as the same place.
 
-- **Aspect-ratio snapping.** While dragging a viewport, the nearest common aspect ratio is detected and snapped to within a 5% tolerance, with a ratio badge and alignment guides. Hold <kbd>Alt</kbd> to draw freely.
+- **Aspect-ratio snapping.** While dragging a viewport, the nearest common aspect ratio is detected and snapped to within a 5% tolerance, with a ratio badge and alignment guides. After drawing, the tool returns to Select mode. Hold <kbd>Alt</kbd> to draw freely.
   Supported: `9:16` · `2:3` · `3:4` · `1:1` · `5:4` · `4:3` · `3:2` · `16:9` · `1.85:1` · `2:1` · `21:9` · `2.39:1`
-- **Right-click a viewport's grip bar** for: duplicate right or down at 50% / 30% / no overlap; push in; pull out; match size to the first viewport; delete. All duplication and scaling preserve the source aspect ratio.
+- **Right-click a viewport's grip bar** to duplicate right or down with either no overlap (and a small gap) or 30% overlap, push in, pull out, match size to the first viewport, or delete. While dragging a viewport, the largest overlap is shaded and its percentage updates live. All duplication and scaling preserve the source aspect ratio.
 - Viewports with mismatched aspect ratios are flagged in the console, since frames of differing ratios cannot be cut together.
 - Scene-space viewport size is free and meaningful: a larger box is a wider shot, a smaller box a tighter one.
 
