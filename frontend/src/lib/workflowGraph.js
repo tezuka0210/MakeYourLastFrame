@@ -1417,8 +1417,10 @@ function getMediaBoxState(node, boxKey = 'default') {
 
   if (!node.__mediaBoxState[boxKey]) {
     node.__mediaBoxState[boxKey] = {
-      height: 96,      // 初始面板高度
-      tileMin: 64      // 初始最小缩略图尺寸
+      height: 72,      // 渲染后会按实际行高和行数重新测量
+      minHeight: 60,
+      tileMin: 48,     // 允许常见节点宽度下一行容纳 4 个结果
+      userResized: false
     }
   }
 
@@ -1432,25 +1434,24 @@ function applyMediaBoxStyle(sel, boxState) {
     .style('height', `${boxState.height}px`)
     .style('box-sizing', 'border-box')
     .style('border', '1px dashed #d1d5db')
-    .style('border-radius', '8px')
-    .style('background', '#ffffff')
-    .style('overflow', 'visible')
-    .style('padding-right', '5px')
-    .style('padding-bottom', '5px')
+    .style('border-radius', '10px')
+    .style('background', '#fcfcfd')
+    .style('overflow', 'hidden')
 }
 
 function buildMediaGrid(box, boxState) {
   return box.append('xhtml:div')
     .attr('class', 'media-box-grid')
     .style('position', 'absolute')
-    .style('top', '6px')
-    .style('left', '6px')
-    .style('right', '16px')
-    .style('bottom', '16px')
+    .style('top', '7px')
+    .style('left', '7px')
+    .style('right', '7px')
+    .style('bottom', '7px')
     .style('display', 'grid')
+    // auto-fill 保留空轨道：只有一个项目时也与一行多个项目保持相同尺寸。
     .style('grid-template-columns', `repeat(auto-fill, minmax(${boxState.tileMin}px, 1fr))`)
-    .style('grid-auto-rows', '1fr')
-    .style('gap', '6px')
+    .style('grid-auto-rows', 'auto')
+    .style('gap', '7px')
     .style('align-content', 'start')
     .style('width', 'auto')
     .style('height', 'auto')
@@ -1461,6 +1462,32 @@ function updateMediaGridLayout(box, boxState) {
   box.style('height', `${boxState.height}px`)
   box.select('.media-box-grid')
     .style('grid-template-columns', `repeat(auto-fill, minmax(${boxState.tileMin}px, 1fr))`)
+}
+
+function syncMediaBoxHeight(box, grid, boxState, options = {}) {
+  const { fitContent = true } = options
+
+  requestAnimationFrame(() => {
+    const gridEl = grid?.node?.() || grid
+    if (!gridEl) return
+
+    const children = Array.from(gridEl.children)
+      .filter(child => !child.classList.contains('segment-empty-placeholder'))
+    const firstTile = children[0]
+    const firstRowHeight = firstTile?.getBoundingClientRect().height || 48
+    const verticalInset = 14
+
+    boxState.minHeight = Math.max(60, Math.ceil(firstRowHeight + verticalInset))
+
+    if (fitContent && !boxState.userResized) {
+      const contentHeight = Math.ceil(gridEl.scrollHeight + verticalInset)
+      boxState.height = Math.max(boxState.minHeight, Math.min(220, contentHeight))
+      box.style('height', `${boxState.height}px`)
+    } else if (boxState.height < boxState.minHeight) {
+      boxState.height = boxState.minHeight
+      box.style('height', `${boxState.height}px`)
+    }
+  })
 }
 
 function addMediaBoxResizeHandle(box, boxState) {
@@ -1489,14 +1516,12 @@ function addMediaBoxResizeHandle(box, boxState) {
 
     const startY = event.clientY
     const startHeight = boxState.height
-    const startTileMin = boxState.tileMin
-
     function onMouseMove(ev) {
       const dy = ev.clientY - startY
 
-      // 让高度和 tile 尺寸一起变化，交互会更自然
-      boxState.height = Math.max(72, Math.min(220, startHeight + dy))
-      boxState.tileMin = Math.max(48, Math.min(120, startTileMin + dy * 0.35))
+      // 这里只调整容器高度，缩略图尺寸始终由可用宽度和标准列宽决定。
+      boxState.userResized = true
+      boxState.height = Math.max(boxState.minHeight || 60, Math.min(220, startHeight + dy))
 
       updateMediaGridLayout(box, boxState)
     }
@@ -1523,6 +1548,23 @@ function addMediaBoxResizeHandle(box, boxState) {
 
       const grid = buildMediaGrid(box, boxState)
       addMediaBoxResizeHandle(box, boxState)
+
+      if (typeof ResizeObserver !== 'undefined') {
+        let lastWidth = -1
+        const observer = new ResizeObserver(() => {
+          const boxEl = box.node()
+          if (!boxEl?.isConnected) {
+            observer.disconnect()
+            return
+          }
+
+          const nextWidth = Math.round(boxEl.clientWidth)
+          if (nextWidth === lastWidth) return
+          lastWidth = nextWidth
+          syncMediaBoxHeight(box, grid, boxState)
+        })
+        observer.observe(box.node())
+      }
 
       if (makeDroppable) {
         box
@@ -1658,6 +1700,8 @@ function addMediaBoxResizeHandle(box, boxState) {
         const wrap = row.append('xhtml:div')
           .style('width', '56px')
           .style('height', '56px')
+          .style('box-sizing', 'border-box')
+          .style('min-width', '0')
           .style('border-radius', '8px')
           .style('overflow', 'hidden')
           .style('border', '1px solid #e5e7eb')
@@ -1684,6 +1728,7 @@ function addMediaBoxResizeHandle(box, boxState) {
         .style('height', '100%')
         .text(emptyText)
 
+      syncMediaBoxHeight(box, grid, getMediaBoxState(node, boxKey))
       return box
     }
 
@@ -1693,11 +1738,13 @@ function addMediaBoxResizeHandle(box, boxState) {
       const tile = grid.append('xhtml:div')
         .style('position', 'relative')
         .style('width', '100%')
+        .style('min-width', '0')
+        .style('box-sizing', 'border-box')
         .style('aspect-ratio', '1 / 1')
-        .style('border-radius', '8px')
+        .style('border-radius', '10px')
         .style('overflow', 'hidden')
-        .style('border', '1px solid #e5e7eb')
-        .style('background', '#f9fafb')
+        .style('border', '1px solid #d8dde5')
+        .style('background', '#ffffff')
         .style('cursor', 'pointer')
         .on('mousedown', ev => ev.stopPropagation())
         .on('click', ev => {
@@ -1746,6 +1793,8 @@ function addMediaBoxResizeHandle(box, boxState) {
           .style('z-index', '3')
       }
     })
+
+    syncMediaBoxHeight(box, grid, getMediaBoxState(node, boxKey))
 
     return box
   }
@@ -2663,15 +2712,17 @@ function addMediaBoxResizeHandle(box, boxState) {
         .attr('id', `entities-${segmentHostKey}`)
         .attr('class', 'segment-results-host')
         .style('position', 'absolute')
-        .style('top', '6px')
-        .style('left', '6px')
-        .style('right', '16px')
-        .style('bottom', '16px')
-        .style('display', 'flex')
-        .style('flex-wrap', 'wrap')
+        .style('top', '7px')
+        .style('left', '7px')
+        .style('right', '7px')
+        .style('bottom', '7px')
+        .style('display', 'grid')
+        .style('grid-template-columns', 'repeat(auto-fill, minmax(48px, 1fr))')
+        .style('grid-auto-rows', 'max-content')
         .style('align-content', 'flex-start')
-        .style('gap', '6px')
-        .style('overflow', 'auto')
+        .style('gap', '7px')
+        .style('overflow-x', 'hidden')
+        .style('overflow-y', 'auto')
         .style('pointer-events', 'auto')
 
       return sec
@@ -3454,25 +3505,28 @@ function renderMediaContent(container, data) {
         placeholder.style.display = 'none'
       }
 
-      // 宿主容器：仅负责排布
-      host.style.display = 'flex'
-      host.style.flexWrap = 'wrap'
+      // 使用实际 clientWidth 排布；节点滚动条出现时，Grid 会自动重算可用列宽。
+      host.style.display = 'grid'
+      host.style.gridTemplateColumns = 'repeat(auto-fill, minmax(48px, 1fr))'
+      host.style.gridAutoRows = 'max-content'
       host.style.alignContent = 'flex-start'
-      host.style.gap = '6px'
-      host.style.overflow = 'auto'
+      host.style.gap = '7px'
+      host.style.overflowX = 'hidden'
+      host.style.overflowY = 'auto'
 
       const hoverColor = getNodeBorderColor(node)
 
       Array.from(host.children).forEach((child) => {
         // ===== tile 基础样式 =====
-        child.style.width = '56px'
-        child.style.height = '56px'
-        child.style.flex = '0 0 auto'
+        child.style.width = '100%'
+        child.style.height = 'auto'
+        child.style.aspectRatio = '1 / 1'
+        child.style.minWidth = '0'
         child.style.position = 'relative'
         child.style.overflow = 'hidden'
         child.style.boxSizing = 'border-box'
-        child.style.borderRadius = '12px'
-        child.style.border = '1px solid #d1d5db'
+        child.style.borderRadius = '10px'
+        child.style.border = '1px solid #d8dde5'
         child.style.background = '#ffffff'
         child.style.boxShadow = 'none'
         child.style.transform = 'none'
@@ -3488,7 +3542,7 @@ function renderMediaContent(container, data) {
           mediaEl.style.objectFit = 'contain'
           mediaEl.style.outline = 'none'
           mediaEl.style.border = 'none'
-          mediaEl.style.borderRadius = '12px'
+          mediaEl.style.borderRadius = '10px'
           mediaEl.style.background = '#ffffff'
           mediaEl.style.transform = 'none'
           mediaEl.style.transition = 'none'
@@ -3568,6 +3622,15 @@ function renderMediaContent(container, data) {
           removeBtn.style.pointerEvents = 'none'
         }
       })
+
+      const segmentBox = host.parentElement
+      if (segmentBox) {
+        syncMediaBoxHeight(
+          d3.select(segmentBox),
+          host,
+          getMediaBoxState(node, 'results')
+        )
+      }
     })
   }, 100)
 
