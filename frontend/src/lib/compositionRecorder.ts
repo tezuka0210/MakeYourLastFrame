@@ -18,7 +18,7 @@ interface RecorderOptions {
 }
 
 const API_BASE: string =
-  (typeof window !== 'undefined' && (window as any).API_BASE) || 'http://localhost:5005';
+  (typeof window !== 'undefined' && (window as any).API_BASE) || 'http://localhost:5006';
 
 let installed = false;
 

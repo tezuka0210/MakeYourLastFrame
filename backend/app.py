@@ -36,11 +36,13 @@ from agents.final_prompt_agent import final_prompt_agent_node
 # --- 模式开关 ----
 APP_MODE = os.getenv('APP_MODE', 'local')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAM_SERVER_URL = os.getenv("SAM_SERVER_URL", "").strip().rstrip("/")
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
 if APP_MODE != 'local':
-    from agents.sam_agent import SAMAgent
     from agents.entity_agent import EntityAgent
+    if not SAM_SERVER_URL:
+        from agents.sam_agent import SAMAgent
 else:
     # 本地模式定义空类，避免导入报错
     class SAMAgent:
@@ -55,7 +57,7 @@ load_dotenv()
 app = Flask(__name__, template_folder='templates')
 CORS(app)
 if APP_MODE != 'local':
-    sam_service = SAMAgent()
+    sam_service = None if SAM_SERVER_URL else SAMAgent()
     entity_v_agent = EntityAgent()
 else:
     sam_service = None  # 本地模式置空
@@ -70,6 +72,7 @@ COMFYUI_SERVER_ADDRESS = "223.193.6.178:8188" # ComfyUI后端的地址和端口
 CLIENT_ID = str(uuid.uuid4()) # 为我们的后端应用生成一个唯一的客户端ID
 # UPLOAD_FOLDER = 'assets'
 # os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+COMFYUI_SERVER_ADDRESS = os.getenv("COMFYUI_SERVER_ADDRESS", COMFYUI_SERVER_ADDRESS)
 
 if APP_MODE == 'local':
     # 本地模式：使用 backend/local_assets 文件夹
@@ -83,6 +86,11 @@ else:
     COMFYUI_OUTPUT_PATH = os.path.join(BASE_COMFYUI_PATH, 'output')
     print(f"服务器模式：使用 '{BASE_COMFYUI_PATH}' 作为 ComfyUI 根目录")
 
+if APP_MODE != 'local' and SAM_SERVER_URL:
+    LOCAL_ASSETS_PATH = os.path.join(BASE_DIR, 'local_assets')
+    COMFYUI_INPUT_PATH = os.path.join(LOCAL_ASSETS_PATH, 'input')
+    COMFYUI_OUTPUT_PATH = os.path.join(LOCAL_ASSETS_PATH, 'output')
+
 print(f"ComfyUI的输入目录被设置为: {COMFYUI_INPUT_PATH}")
 print(f"ComfyUI的输出目录被设置为: {COMFYUI_OUTPUT_PATH}")
 os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
@@ -94,6 +102,76 @@ STITCHED_OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'stitched_video
 os.makedirs(STITCHED_OUTPUT_FOLDER, exist_ok=True)
 
 # --- 2. 核心辅助函数 ---
+
+def comfyui_http_url(path: str = "") -> str:
+    base = COMFYUI_SERVER_ADDRESS.strip().rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        base = f"http://{base}"
+    return f"{base}{path}"
+
+def comfyui_ws_url(path: str = "") -> str:
+    base = COMFYUI_SERVER_ADDRESS.strip().rstrip("/")
+    if base.startswith("https://"):
+        base = "wss://" + base[len("https://"):]
+    elif base.startswith("http://"):
+        base = "ws://" + base[len("http://"):]
+    else:
+        base = f"ws://{base}"
+    return f"{base}{path}"
+
+def upload_bytes_to_comfyui_input(file_bytes: bytes, filename: str, content_type: str = "application/octet-stream") -> None:
+    response = requests.post(
+        comfyui_http_url("/upload/image"),
+        files={"image": (filename, io.BytesIO(file_bytes), content_type)},
+        data={"type": "input", "overwrite": "true"},
+        timeout=60
+    )
+    response.raise_for_status()
+
+def fetch_comfyui_view(filename: str, subfolder: str = "", file_type: str = "output") -> requests.Response:
+    return requests.get(
+        comfyui_http_url("/view"),
+        params={"filename": filename, "subfolder": subfolder, "type": file_type},
+        stream=True,
+        timeout=60
+    )
+
+def copy_comfyui_output_to_input(filename: str, subfolder: str = "") -> None:
+    response = fetch_comfyui_view(filename, subfolder, "output")
+    response.raise_for_status()
+    upload_bytes_to_comfyui_input(
+        response.content,
+        filename,
+        response.headers.get("Content-Type", "application/octet-stream")
+    )
+
+def ensure_local_comfyui_input_file(filename: str) -> str:
+    local_path = os.path.join(COMFYUI_INPUT_PATH, filename)
+    if os.path.exists(local_path):
+        return local_path
+    os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
+    response = fetch_comfyui_view(filename, "", "input")
+    response.raise_for_status()
+    with open(local_path, "wb") as f:
+        f.write(response.content)
+    return local_path
+
+def segment_with_sam(image_path: str, text_prompt: str, output_dir: str = "entities") -> list[dict]:
+    if SAM_SERVER_URL:
+        with open(image_path, "rb") as image_file:
+            response = requests.post(
+                f"{SAM_SERVER_URL}/api/sam/segment",
+                files={"image": (os.path.basename(image_path), image_file, mimetypes.guess_type(image_path)[0] or "image/png")},
+                data={"prompt": text_prompt, "output_dir": output_dir},
+                timeout=180
+            )
+        response.raise_for_status()
+        return response.json().get("segments", [])
+    return sam_service.segment_by_text(
+        image_path=image_path,
+        text_prompt=text_prompt,
+        output_dir=output_dir
+    )
 
 def find_node_id_by_title(workflow: dict, target_title: str) -> Optional[str]:
     """遍历工作流JSON，根据自定义的节点标题查找节点ID。"""
@@ -120,7 +198,7 @@ def queue_comfyui_prompt(workflow: dict) -> dict:
     print(json.dumps(workflow, indent=2, ensure_ascii=False))
     print("----------------------------------------------------")
     
-    response = requests.post(f"http://{COMFYUI_SERVER_ADDRESS}/prompt", json=prompt_data)
+    response = requests.post(comfyui_http_url("/prompt"), json=prompt_data)
     response.raise_for_status()
     print("<<< ComfyUI已接受任务。")
     return response.json()
@@ -131,7 +209,7 @@ def get_comfyui_outputs(prompt_id: str) -> dict:
     这是处理耗时任务的关键。
     """
     ws = websocket.WebSocket()
-    ws.connect(f"ws://{COMFYUI_SERVER_ADDRESS}/ws?clientId={CLIENT_ID}")
+    ws.connect(comfyui_ws_url(f"/ws?clientId={CLIENT_ID}"))
     
     while True:
         try:
@@ -149,7 +227,7 @@ def get_comfyui_outputs(prompt_id: str) -> dict:
     ws.close()
 
     # 从/history API获取最终的输出信息
-    history_response = requests.get(f"http://{COMFYUI_SERVER_ADDRESS}/history/{prompt_id}")
+    history_response = requests.get(comfyui_http_url(f"/history/{prompt_id}"))
     history_response.raise_for_status()
     history = history_response.json()
     # --- 【请在这里添加关键调试代码】---
@@ -309,8 +387,14 @@ def ensure_asset_in_comfyui_input(asset_url: str) -> str:
     os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
 
     if file_type == "input":
+        if APP_MODE != 'local':
+            return make_input_asset_url(filename)
         if not os.path.exists(target_path):
             raise FileNotFoundError(f"Input asset not found: {target_path}")
+        return make_input_asset_url(filename)
+
+    if APP_MODE != 'local':
+        copy_comfyui_output_to_input(filename, subfolder)
         return make_input_asset_url(filename)
 
     if not source_path or not os.path.exists(source_path):
@@ -1104,6 +1188,32 @@ def view_file():
         return abort(400, "缺少 filename 参数")
 
     # (v89 修复) 2. 根据 'type' 决定搜索路径
+    if APP_MODE != 'local':
+        try:
+            remote_headers = {}
+            if request.headers.get("Range"):
+                remote_headers["Range"] = request.headers["Range"]
+            remote_response = requests.get(
+                comfyui_http_url("/view"),
+                params={"filename": filename, "subfolder": subfolder, "type": file_type},
+                headers=remote_headers,
+                stream=True,
+                timeout=60
+            )
+            if remote_response.status_code in (200, 206):
+                headers = {"X-Content-Type-Options": "nosniff"}
+                for header in ("Content-Range", "Accept-Ranges", "Content-Length"):
+                    if remote_response.headers.get(header):
+                        headers[header] = remote_response.headers[header]
+                return Response(
+                    remote_response.iter_content(chunk_size=1024 * 64),
+                    status=remote_response.status_code,
+                    headers=headers,
+                    mimetype=remote_response.headers.get("Content-Type", "application/octet-stream")
+                )
+        except Exception as exc:
+            print(f"Remote ComfyUI view failed, falling back to local file: {exc}")
+
     if file_type == "input":
         # 如果是 'input' 类型, 只在 input 目录查找
         file_path = os.path.join(COMFYUI_INPUT_PATH, filename)
@@ -1352,7 +1462,15 @@ def upload_asset():
             _, ext = os.path.splitext(file.filename)
             filename = f"{uuid.uuid4()}{ext}"  # 唯一文件名
             filepath = os.path.join(COMFYUI_INPUT_PATH, filename)
-            file.save(filepath)
+            file_bytes = file.read()
+            with open(filepath, "wb") as f:
+                f.write(file_bytes)
+            if APP_MODE != 'local':
+                upload_bytes_to_comfyui_input(
+                    file_bytes,
+                    filename,
+                    file.mimetype or "application/octet-stream"
+                )
             print(f"    - 文件已上传并保存到: {filepath}")
 
             # 4. 构建文件访问URL
@@ -1440,7 +1558,7 @@ def get_tree(tree_id):
         # 简单处理：只为ID为1的项目自动创建
         if tree_id == 1:
             new_tree_id = database.create_tree("我的第一个项目")
-            database.add_node(new_tree_id, None, "Init", {"description": "项目根节点"})
+            database.add_node(                 node_id=str(uuid.uuid4()),                 tree_id=new_tree_id,                 parent_ids=None,                 module_id="Init",                 parameters={"description": "Project root node"},                 title="Initial Node",                 assets={},                 status="completed"             )
             tree_data = database.get_tree_as_json(new_tree_id)
         else:
             return jsonify({"error": f"Tree with ID {tree_id} not found."}), 404
@@ -1448,7 +1566,7 @@ def get_tree(tree_id):
     #  场景2：项目存在，但里面是空的（没有任何节点）
     elif not tree_data.get('nodes'):
         print(f"项目 {tree_id} 为空，正在自动添加根节点...")
-        database.add_node(tree_id, None, "Init", {"description": "项目根节点"})
+        database.add_node(             node_id=str(uuid.uuid4()),             tree_id=tree_id,             parent_ids=None,             module_id="Init",             parameters={"description": "Project root node"},             title="Initial Node",             assets={},             status="completed"         )
         # 重新获取一次数据
         tree_data = database.get_tree_as_json(tree_id)
         
@@ -1751,6 +1869,8 @@ def create_node():
 
             source_image_filename = input_images[0]
             source_image_path = os.path.join(COMFYUI_INPUT_PATH, source_image_filename)
+            if APP_MODE != 'local':
+                source_image_path = ensure_local_comfyui_input_file(source_image_filename)
             print(f"    - 源图路径: {source_image_path}")
 
             # 2. 调用实体识别
@@ -1766,7 +1886,7 @@ def create_node():
             entity_output_dir = "entities"
 
             for subject in target_subjects:
-                res = sam_service.segment_by_text(
+                res = segment_with_sam(
                     image_path=source_image_path,
                     text_prompt=subject,
                     output_dir=entity_output_dir
@@ -1918,10 +2038,13 @@ def create_node():
                 parsed_url = urllib.parse.urlparse(merge_image_url)
                 query_params = urllib.parse.parse_qs(parsed_url.query)
                 merge_filename_merge = query_params.get('filename', [None])[0]
-                output_img_path = os.path.join(COMFYUI_OUTPUT_PATH, merge_filename_merge)
-                input_img_path = os.path.join(COMFYUI_INPUT_PATH, merge_filename_merge)
-                os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
-                shutil.copy2(output_img_path, input_img_path)
+                if APP_MODE != 'local':
+                    copy_comfyui_output_to_input(merge_filename_merge)
+                else:
+                    output_img_path = os.path.join(COMFYUI_OUTPUT_PATH, merge_filename_merge)
+                    input_img_path = os.path.join(COMFYUI_INPUT_PATH, merge_filename_merge)
+                    os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
+                    shutil.copy2(output_img_path, input_img_path)
                 image_filenames["LoadImage"] = merge_filename_merge
                 final_module_id = module_id_from_frontend
                 workflow = load_workflow(final_module_id)
@@ -2054,7 +2177,7 @@ def extract_entities():
     os.makedirs(output_dir, exist_ok=True)
     
     try:
-        segments = sam_agent.segment_by_text(image_path, prompt, output_dir)
+        segments = segment_with_sam(image_path, prompt, output_dir)
         
         # 3. 更新数据库：存入实体的“档案表”
         for seg in segments:
@@ -2400,5 +2523,5 @@ if __name__ == '__main__':
         print(f"已创建默认项目，ID为: {tree_id}")
 
 
-    app.run(host='0.0.0.0', port=5005, debug=True)
+    app.run(host='0.0.0.0', port=int(os.getenv("BACKEND_PORT", "5006")), debug=True)
 

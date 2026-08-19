@@ -1,13 +1,17 @@
 import sqlite3
 import json
 import uuid
+import os
 from datetime import datetime
 from typing import Optional, List, Dict
 
 # --- 配置 ---
 # 数据库文件的名称，它将与 app.py 存储在同一个 backend/ 目录下
 #DATABASE_FILE = 'video_tree_Camel_figurines.db'
-DATABASE_FILE = 'video_tree.db'
+DATABASE_FILE = os.getenv(
+    "DATABASE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "video_tree.db")
+)
 # --- 核心函数 ---
 
 def get_db_connection():

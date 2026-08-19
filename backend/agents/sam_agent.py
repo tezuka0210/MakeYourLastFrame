@@ -2,10 +2,16 @@ import torch
 import os
 import uuid
 import re
+import sys
 import numpy as np
 from PIL import Image
-from sam3.sam3.model_builder import build_sam3_image_model
-from sam3.sam3.model.sam3_image_processor import Sam3Processor
+
+SAM3_REPO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sam3"))
+if SAM3_REPO_PATH not in sys.path:
+    sys.path.insert(0, SAM3_REPO_PATH)
+
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
 
 class SAMAgent:
     def __init__(self):

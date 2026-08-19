@@ -41,7 +41,7 @@ export function updateEntityDisplay(nodeId, segmentedAssets, node) {
     }
 
     // 定义后端基础地址
-    const BACKEND_URL = 'http://localhost:5005';
+    const BACKEND_URL = 'http://localhost:5006';
 
     // ========== 保留原有：创建放大预览弹窗（全局唯一） ==========
     let previewModal = document.getElementById('entity-preview-modal');

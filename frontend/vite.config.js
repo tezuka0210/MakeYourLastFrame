@@ -15,11 +15,11 @@ export default defineConfig({
     proxy: {
       // 匹配所有以 /api 开头的请求
       '/api': {
-        target: 'http://127.0.0.1:5005', // 你的后端 app.py 地址
+        target: 'http://127.0.0.1:5006', // 你的后端 app.py 地址
         changeOrigin: true,
       },
       '/view': {
-        target: 'http://127.0.0.1:5005', // 你的后端 app.py 地址
+        target: 'http://127.0.0.1:5006', // 你的后端 app.py 地址
         changeOrigin: true,
       }
     }
