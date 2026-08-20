@@ -1193,6 +1193,14 @@ export function renderTree(
   }
 
   function fileNameFromUrl(url = '', fallbackBase = 'asset') {
+    try {
+      const parsed = new URL(String(url || ''), window.location.origin)
+      const filename = parsed.searchParams.get('filename')
+      if (filename && filename.includes('.')) return filename
+    } catch (_) {
+      /* fall through to path parsing */
+    }
+
     const safeUrl = String(url || '').split('?')[0].split('#')[0]
     const tail = safeUrl.split('/').pop() || ''
     if (tail && tail.includes('.')) return tail
@@ -1222,7 +1230,18 @@ export function renderTree(
       return new File([blob], fallbackName, { type: blob.type || 'application/octet-stream' })
     }
 
-    return null
+    try {
+      const res = await fetch(safeUrl)
+      if (!res.ok) return null
+
+      const blob = await res.blob()
+      return new File([blob], fallbackName, {
+        type: blob.type || res.headers.get('content-type') || 'application/octet-stream'
+      })
+    } catch (e) {
+      console.warn('Could not convert dropped media URL to an uploadable file:', safeUrl, e)
+      return null
+    }
   }
 
   function getCompositeSourceItems(compositeNode) {
@@ -2660,15 +2679,16 @@ function addMediaBoxResizeHandle(box, boxState) {
         boxKey: 'assets',
         onDropMedia: async (resolvedUrl, dragData = {}) => {
           const resolvedType = dragData?.type || dragData?.clip?.type || deriveMediaKind(resolvedUrl)
-          appendLocalUrls([resolvedUrl], resolvedType)
-          renderRow()
-
           const uploadFile = await urlToUploadableFile(
             resolvedUrl,
             fileNameFromUrl(resolvedUrl, `asset-${resolvedType}`)
           )
           if (uploadFile) {
+            appendLocalUrls([resolvedUrl], resolvedType)
+            renderRow()
             emit('upload-media', node.id, [uploadFile])
+          } else {
+            console.warn('Dropped asset could not be uploaded:', resolvedUrl)
           }
         },
         onThumbClick: (url, type) => emit('open-preview', url, type)

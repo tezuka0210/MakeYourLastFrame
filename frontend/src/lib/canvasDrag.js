@@ -2168,6 +2168,9 @@ export function initCanvasDrag() {
 
     members.forEach(it => {
       const pos = getImagePosition(it.element);
+      const before = getItemSize(it);
+      const itemCx = pos.x + before.w / 2;
+      const itemCy = pos.y + before.h / 2;
       const el = it.element;
 
       if (it.kind === 'image') {
@@ -2175,9 +2178,15 @@ export function initCanvasDrag() {
         const next = clamp(cur * factor, MIN_SCALE, MAX_SCALE);
         el.dataset.scale = String(next);
         el.style.width = `${100 * next}px`;
+      } else if (before.w > 0 && before.h > 0) {
+        el.style.width = `${before.w * factor}px`;
+        el.style.height = `${before.h * factor}px`;
       }
 
-      setImagePosition(el, cx + (pos.x - cx) * factor, cy + (pos.y - cy) * factor);
+      const after = getItemSize(it);
+      const nextCx = cx + (itemCx - cx) * factor;
+      const nextCy = cy + (itemCy - cy) * factor;
+      setImagePosition(el, nextCx - after.w / 2, nextCy - after.h / 2);
     });
 
     refreshGroupVisual(group);

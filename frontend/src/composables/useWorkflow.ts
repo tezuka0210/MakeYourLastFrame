@@ -506,7 +506,7 @@ function toggleNodeCollapse(nodeId: string) {
 
     try {
         // 1. 从共享工具中获取前一轮 Agent 上下文
-      if(moduleId != "AddWorkflow"&& moduleId !=  "AddText"){
+      if(moduleId != "AddWorkflow" && moduleId != "AddText" && moduleId != "SegmentElement"){
         const prevAgentContext = getPrevAgentContext();
 
         // 2. 调用后端轻量接口（仅跑 Final Prompt Agent）

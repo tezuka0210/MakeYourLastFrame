@@ -135,7 +135,10 @@ export const workflowParameters = {
     { id: 'multiplier', label: 'multiplier', type: 'number', defaultValue: 2 },
     { id: 'fps', label: 'fps', type: 'number', defaultValue: 16, step: 1 }
   ],
-  SegmentElement: []
+  SegmentElement: [
+    { id: 'positive_prompt', label: 'Entities', type: 'textarea', defaultValue: '', placeholder: 'girl, dog, chair' },
+    { id: 'background_prompt', label: 'Background Prompt', type: 'textarea', defaultValue: '', placeholder: 'Replace the background with...' }
+  ]
 }
 
 /* 主函数：useWorkflowForm */
