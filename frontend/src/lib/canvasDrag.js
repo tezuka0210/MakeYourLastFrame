@@ -161,6 +161,7 @@ export function initCanvasDrag() {
 
   let lastDragData = null;
   let boardDragDepth = 0;
+  let lastExternalCanvasDrop = null;
 
   function setBoardDragVisual(active) {
     // 你现在不想要蓝色背景，所以这里直接禁用 dragover 视觉
@@ -175,6 +176,11 @@ export function initCanvasDrag() {
   function resetBoardDragState() {
     boardDragDepth = 0;
     setBoardDragVisual(false);
+  }
+
+  function clearExternalDropState() {
+    window.__workflowDragData = null;
+    window.__stitchingDragClip = null;
   }
   const API_BASE = window.API_BASE || '';
 
@@ -1791,6 +1797,7 @@ export function initCanvasDrag() {
 
     el.addEventListener('mousedown', ev => {
       if (paintMode) return;
+      clearExternalDropState();
 
       // 空格 / 中键要平移，或点在素材的透明处 —— 都当作空白区域处理，
       // 这样用户可以在看上去是空白的地方框选和平移。
@@ -1821,6 +1828,7 @@ export function initCanvasDrag() {
         if (paintMode) return;
         ev.preventDefault();
         ev.stopPropagation();
+        clearExternalDropState();
 
         // 属于编组时整组一起缩放，保持成员间的相对位置与大小关系
         const group = getGroupOfItem(item);
@@ -3629,7 +3637,7 @@ export function initCanvasDrag() {
 
   function extractDragData(e) {
     const dt = e.dataTransfer;
-    if (!dt) return lastDragData;
+    if (!dt) return lastDragData || window.__workflowDragData || null;
 
     const rawJson = dt.getData('application/json');
     const rawPlain = dt.getData('text/plain');
@@ -3656,7 +3664,41 @@ export function initCanvasDrag() {
       }
     }
 
-    return lastDragData;
+    return lastDragData || window.__workflowDragData || null;
+  }
+
+  function addDroppedImageToCanvas(data, clientX, clientY) {
+    const resolvedUrl = resolveDroppedImageUrl(data);
+    if (!resolvedUrl) {
+      console.error('No usable image URL:', data);
+      return;
+    }
+
+    const now = Date.now();
+    if (
+      lastExternalCanvasDrop &&
+      now - lastExternalCanvasDrop.time < 250 &&
+      lastExternalCanvasDrop.url === resolvedUrl &&
+      Math.abs(lastExternalCanvasDrop.clientX - clientX) < 4 &&
+      Math.abs(lastExternalCanvasDrop.clientY - clientY) < 4
+    ) {
+      return;
+    }
+    lastExternalCanvasDrop = { url: resolvedUrl, clientX, clientY, time: now };
+
+    const scenePoint = screenToScene(clientX, clientY);
+    const x = scenePoint.x - 50;
+    const y = scenePoint.y - 50;
+
+    const img = new Image();
+    img.onload = () => {
+      createImageItem(img, { ...data, url: resolvedUrl }, x, y);
+      applyBoardCamera();
+    };
+    img.onerror = () => {
+      console.error('Image failed to load:', resolvedUrl);
+    };
+    img.src = resolvedUrl;
   }
 
   function initMaskCanvas() {
@@ -4106,33 +4148,26 @@ export function initCanvasDrag() {
     resetBoardDragState();
 
     const data = extractDragData(e);
-    if (!data || !data.url) {
+    if (!data || !resolveDroppedImageUrl(data)) {
       console.warn('Drop did not yield a usable image URL.', e.dataTransfer?.types);
       return;
     }
 
-    const scenePoint = screenToScene(e.clientX, e.clientY);
-    const x = scenePoint.x - 50;
-    const y = scenePoint.y - 50;
+    addDroppedImageToCanvas(data, e.clientX, e.clientY);
+  });
 
-    const resolvedUrl = resolveDroppedImageUrl(data);
-    if (!resolvedUrl) {
-      console.error('No usable image URL:', data);
-      return;
-    }
+  window.addEventListener('workflow-media-drop-on-canvas', e => {
+    const detail = e.detail || {};
+    if (!detail.fromExternalDrag) return;
 
-    const img = new Image();
-    img.onload = () => {
-      createImageItem(img, { ...data, url: resolvedUrl }, x, y);
-      applyBoardCamera();
-    };
-    img.onerror = () => {
-      console.error('Image failed to load:', resolvedUrl);
-    };
-    img.src = resolvedUrl;
+    const data = detail.payload;
+    if (!data) return;
+
+    addDroppedImageToCanvas(data, detail.clientX, detail.clientY);
   });
 
     drawingBoard.addEventListener('mousedown', e => {
+      clearExternalDropState();
       if (!drawSubCanvasMode) return;
 
       const isEmptyTarget =
@@ -4468,6 +4503,7 @@ export function initCanvasDrag() {
   });
 
     drawingBoard.addEventListener('mousedown', e => {
+      clearExternalDropState();
       const isEmptyTarget =
         e.target === drawingBoard ||
         e.target === drawingScene ||

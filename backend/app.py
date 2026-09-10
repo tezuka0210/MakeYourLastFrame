@@ -34,8 +34,10 @@ from agents.workflow_agent import workflow_selector_node
 from agents.prompt_agent import prompt_agent_node
 from agents.final_prompt_agent import final_prompt_agent_node 
 # --- 模式开关 ----
-APP_MODE = os.getenv('APP_MODE', 'local')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+APP_MODE = os.getenv('APP_MODE', 'local')
+ENTITY_OUTPUT_DIR = os.path.join(BASE_DIR, "entities")
 SAM_SERVER_URL = os.getenv("SAM_SERVER_URL", "").strip().rstrip("/")
 print(f"--- 应用程序正在以 {APP_MODE.upper()} 模式运行 ---")
 
@@ -53,9 +55,9 @@ else:
 
 # --- 1. 初始化与配置 ---
 
-load_dotenv()
 app = Flask(__name__, template_folder='templates')
 CORS(app)
+database.init_db()
 if APP_MODE != 'local':
     sam_service = None if SAM_SERVER_URL else SAMAgent()
     entity_v_agent = EntityAgent()
@@ -94,6 +96,7 @@ if APP_MODE != 'local' and SAM_SERVER_URL:
 print(f"ComfyUI的输入目录被设置为: {COMFYUI_INPUT_PATH}")
 print(f"ComfyUI的输出目录被设置为: {COMFYUI_OUTPUT_PATH}")
 os.makedirs(COMFYUI_INPUT_PATH, exist_ok=True)
+os.makedirs(ENTITY_OUTPUT_DIR, exist_ok=True)
 # 图片目录
 IMAGE_DIR = os.path.join(COMFYUI_OUTPUT_PATH)
 # 视频目录
@@ -156,22 +159,171 @@ def ensure_local_comfyui_input_file(filename: str) -> str:
         f.write(response.content)
     return local_path
 
-def segment_with_sam(image_path: str, text_prompt: str, output_dir: str = "entities") -> list[dict]:
+def ensure_local_comfyui_output_file(filename: str, subfolder: str = "", file_type: str = "output", force_refresh: bool = False) -> str:
+    candidates = [
+        os.path.join(COMFYUI_OUTPUT_PATH, subfolder, filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, "video", filename),
+        os.path.join(COMFYUI_OUTPUT_PATH, "audio", filename),
+    ]
+    if not force_refresh:
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+
+    if APP_MODE == "local":
+        raise FileNotFoundError(f"视频/图片文件未找到: {filename} (尝试路径: {candidates})")
+
+    target_dir = os.path.join(COMFYUI_OUTPUT_PATH, subfolder or "")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, filename)
+
+    response = fetch_comfyui_view(filename, subfolder, file_type or "output")
+    response.raise_for_status()
+    with open(target_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+    return target_path
+
+def resolve_stitch_media_path(asset_url: str) -> str:
+    filename, subfolder, file_type, local_path = resolve_asset_file_path(asset_url)
+    if not filename:
+        raise ValueError(f"Cannot parse media filename from path: {asset_url}")
+
+    if APP_MODE != "local" and file_type != "input":
+        return ensure_local_comfyui_output_file(
+            filename,
+            subfolder or "",
+            file_type or "output",
+            force_refresh=True
+        )
+
+    if local_path and os.path.exists(local_path):
+        return local_path
+
+    if file_type == "input":
+        return ensure_local_comfyui_input_file(filename)
+
+    return ensure_local_comfyui_output_file(filename, subfolder or "", file_type or "output")
+
+def parse_segment_subjects_from_prompt(prompt_text: str) -> list[str]:
+    text = (prompt_text or "").strip()
+    if not text:
+        return []
+
+    normalized = re.sub(
+        r"\s+and\s+(?:her|his|their|its|the|a|an)\s+",
+        ", ",
+        text,
+        flags=re.IGNORECASE
+    )
+    parts = re.split(r"[,，\n;；]+", normalized)
+
+    subjects = []
+    seen = set()
+    for item in parts:
+        subject = re.sub(
+            r"^\s*(?:the|a|an|her|his|their|its)\s+",
+            "",
+            item.strip(),
+            flags=re.IGNORECASE
+        ).strip()
+        key = subject.lower()
+        if subject and key not in seen:
+            subjects.append(subject)
+            seen.add(key)
+    return subjects
+
+def seconds_to_video_length(seconds, fps=16) -> int:
+    try:
+        target_frames = max(1, int(round(float(seconds) * float(fps))))
+    except (TypeError, ValueError):
+        target_frames = 81
+
+    if target_frames <= 1:
+        return 1
+
+    # Wan/Hunyuan video nodes generally expect frame counts in the 8n+1 family.
+    return int(((target_frames - 1 + 7) // 8) * 8 + 1)
+
+def append_prompt_text(base_prompt: str, extra_prompt: str) -> str:
+    base = str(base_prompt or "").strip()
+    extra = str(extra_prompt or "").strip()
+    if not base:
+        return extra
+    if not extra:
+        return base
+    return f"{base}, {extra}"
+
+def build_segment_background_prompt(parameters: dict, target_subjects: list[str]) -> str:
+    explicit_prompt = (
+        parameters.get("background_prompt")
+        or parameters.get("remove_people_prompt")
+        or ""
+    ).strip()
+    if explicit_prompt:
+        return explicit_prompt
+
+    subject_text = ", ".join(target_subjects or ["foreground subjects"])
+    return (
+        f"Remove {subject_text} from the image and reconstruct the original background "
+        "behind them. Preserve the camera angle, lighting, composition, color tone, "
+        "and scene context. Do not add new subjects."
+    )
+
+def normalize_segment_paths(segments: list[dict]) -> list[dict]:
+    normalized_segments = []
+    for segment in segments or []:
+        normalized = dict(segment)
+        raw_path = str(normalized.get("path", "") or "")
+        if raw_path and not raw_path.startswith(("http://", "https://", "/entities/")):
+            normalized["path"] = f"/entities/{os.path.basename(raw_path)}"
+        normalized_segments.append(normalized)
+    return normalized_segments
+
+def copy_remote_sam_segments_to_local(segments: list[dict]) -> None:
+    if not SAM_SERVER_URL:
+        return
+
+    os.makedirs(ENTITY_OUTPUT_DIR, exist_ok=True)
+    for segment in segments or []:
+        raw_path = str(segment.get("path", "") or "")
+        filename = segment.get("filename") or os.path.basename(urlparse(raw_path).path)
+        if not filename:
+            continue
+
+        local_path = os.path.join(ENTITY_OUTPUT_DIR, filename)
+        if os.path.exists(local_path):
+            continue
+
+        remote_url = raw_path if raw_path.startswith(("http://", "https://")) else f"{SAM_SERVER_URL}/entities/{urllib.parse.quote(filename)}"
+        try:
+            remote_response = requests.get(remote_url, timeout=60)
+            remote_response.raise_for_status()
+            with open(local_path, "wb") as local_file:
+                local_file.write(remote_response.content)
+        except Exception as exc:
+            print(f"Warning: failed to copy SAM segment {filename} from {remote_url}: {exc}")
+
+def segment_with_sam(image_path: str, text_prompt: str, output_dir: str = ENTITY_OUTPUT_DIR) -> list[dict]:
     if SAM_SERVER_URL:
         with open(image_path, "rb") as image_file:
             response = requests.post(
                 f"{SAM_SERVER_URL}/api/sam/segment",
                 files={"image": (os.path.basename(image_path), image_file, mimetypes.guess_type(image_path)[0] or "image/png")},
-                data={"prompt": text_prompt, "output_dir": output_dir},
+                data={"prompt": text_prompt},
                 timeout=180
             )
         response.raise_for_status()
-        return response.json().get("segments", [])
-    return sam_service.segment_by_text(
+        remote_segments = response.json().get("segments", [])
+        copy_remote_sam_segments_to_local(remote_segments)
+        return normalize_segment_paths(remote_segments)
+    return normalize_segment_paths(sam_service.segment_by_text(
         image_path=image_path,
         text_prompt=text_prompt,
         output_dir=output_dir
-    )
+    ))
 
 def find_node_id_by_title(workflow: dict, target_title: str) -> Optional[str]:
     """遍历工作流JSON，根据自定义的节点标题查找节点ID。"""
@@ -352,19 +504,19 @@ def get_asset_bucket(filename: str, content_type: str = "") -> str:
         return "audio"
     return "images"
 
-def resolve_asset_file_path(asset_url: str) -> tuple[str | None, str | None, str | None]:
+def resolve_asset_file_path(asset_url: str) -> tuple[str | None, str | None, str | None, str | None]:
     parsed_url = urllib.parse.urlparse(asset_url or "")
     query_params = urllib.parse.parse_qs(parsed_url.query)
     filename = query_params.get("filename", [None])[0]
     if not filename:
-        return None, None, None
+        return None, None, None, None
 
     filename = urllib.parse.unquote_plus(filename)
     subfolder = urllib.parse.unquote_plus(query_params.get("subfolder", [""])[0] or "")
     file_type = query_params.get("type", ["output"])[0] or "output"
 
     if file_type == "input":
-        return filename, file_type, os.path.join(COMFYUI_INPUT_PATH, filename)
+        return filename, subfolder, file_type, os.path.join(COMFYUI_INPUT_PATH, filename)
 
     candidates = [
         os.path.join(COMFYUI_OUTPUT_PATH, subfolder, filename),
@@ -374,12 +526,12 @@ def resolve_asset_file_path(asset_url: str) -> tuple[str | None, str | None, str
     ]
     for candidate in candidates:
         if os.path.exists(candidate):
-            return filename, file_type, candidate
+            return filename, subfolder, file_type, candidate
 
-    return filename, file_type, candidates[0]
+    return filename, subfolder, file_type, candidates[0]
 
 def ensure_asset_in_comfyui_input(asset_url: str) -> str:
-    filename, file_type, source_path = resolve_asset_file_path(asset_url)
+    filename, subfolder, file_type, source_path = resolve_asset_file_path(asset_url)
     if not filename:
         return asset_url
 
@@ -1389,6 +1541,7 @@ def process_agent_request():
 
 @app.route('/api/agents/only-prompt', methods=['POST'])
 def only_prompt_agent():
+    agent_start = time.perf_counter()
     try:
         # 1. 获取前端传递的参数：新 prompt + 前一轮 Agent 的关键上下文
         data = request.get_json(silent=True) or {}
@@ -1425,6 +1578,19 @@ def only_prompt_agent():
         final_prompt = prompt_result.get('final_prompt', {
             "positive": new_positive_prompt,
             "negative": new_negative_prompt
+        })
+        agent_time_ms = round((time.perf_counter() - agent_start) * 1000, 2)
+        database.add_interaction_metric({
+            "event_type": "prompt_agent",
+            "module_id": prev_agent_context.get("selected_workflow", ""),
+            "prompt_input_view": data.get("prompt_input_view") or "workflow_form",
+            "prompt_text": new_positive_prompt,
+            "negative_prompt": new_negative_prompt,
+            "agent_time_ms": agent_time_ms,
+            "payload": {
+                "final_prompt": final_prompt,
+                "prev_agent_context": prev_agent_context
+            }
         })
 
         # 4. 返回优化后的 prompt 给前端
@@ -1550,6 +1716,7 @@ def update_node_media(node_id):
 @app.route('/api/trees/<int:tree_id>', methods=['GET'])
 def get_tree(tree_id):
     """API: 获取一棵树的完整结构，如果项目或根节点不存在，则自动创建。"""
+    database.init_db()
     tree_data = database.get_tree_as_json(tree_id)
     
     # 场景1：连项目（树）本身都不存在
@@ -1573,6 +1740,14 @@ def get_tree(tree_id):
     return jsonify(tree_data)
 
 # --- 【新增】删除节点的API接口 ---
+@app.route('/api/metrics/record', methods=['POST'])
+def api_metrics_record():
+    payload = request.get_json(silent=True) or {}
+    metric_id = database.add_interaction_metric(payload)
+    if not metric_id:
+        return jsonify({"error": "failed to save metric"}), 500
+    return jsonify({"metric_id": metric_id}), 200
+
 @app.route('/api/nodes/<node_id>', methods=['DELETE'])
 def delete_node(node_id):
     """API: 删除一个节点及其所有后代。"""
@@ -1768,6 +1943,7 @@ def create_node():
     # 服务器模式
     # ============================================================
     print(">>> 处于服务器模式：开始 ComfyUI 生成。")
+    generation_start = time.perf_counter()
     data = request.get_json()
     tree_id = data.get('tree_id')
     node_id = data.get('node_id', [])
@@ -1874,16 +2050,27 @@ def create_node():
             print(f"    - 源图路径: {source_image_path}")
 
             # 2. 调用实体识别
-            user_prompt = parameters.get('positive_prompt', '')
-            target_subjects = entity_v_agent.detect_entities_from_vision(
-                image_path=source_image_path,
-                original_prompt=user_prompt
+            # 2. Resolve segmentation targets.
+            user_prompt = (
+                parameters.get('positive_prompt')
+                or parameters.get('prompt')
+                or parameters.get('text')
+                or ''
             )
-            print(f"    - 识别到实体: {target_subjects}")
+            target_subjects = parse_segment_subjects_from_prompt(user_prompt)
+            if target_subjects:
+                print(f"    - 使用用户 prompt 指定实体: {target_subjects}")
+            else:
+                target_subjects = entity_v_agent.detect_entities_from_vision(
+                    image_path=source_image_path,
+                    original_prompt=user_prompt
+                )
+            parameters['segment_subjects'] = target_subjects
+            print(f"    - 目标分割实体: {target_subjects}")
 
             # 3. 执行分割（完全按你原来的逻辑）
             segmented_results = []
-            entity_output_dir = "entities"
+            entity_output_dir = ENTITY_OUTPUT_DIR
 
             for subject in target_subjects:
                 res = segment_with_sam(
@@ -1927,6 +2114,15 @@ def create_node():
                 else:
                     raise ValueError("RemovePeople 工作流中未找到 LoadImage 节点")
 
+
+                background_prompt = build_segment_background_prompt(parameters, target_subjects)
+                background_prompt_node_id = find_node_id_by_title(remove_people_workflow, "CLIP Text Encode (Positive Prompt)")
+                if background_prompt_node_id:
+                    remove_people_workflow[background_prompt_node_id]["inputs"]['text'] = background_prompt
+                    parameters['background_prompt_used'] = background_prompt
+                    print(f"    - RemovePeople background prompt: {background_prompt}")
+                else:
+                    print("    - Warning: RemovePeople workflow has no positive prompt node; using workflow defaults.")
                 # 执行
                 remove_queued_prompt = queue_comfyui_prompt(remove_people_workflow)
                 remove_prompt_id = remove_queued_prompt['prompt_id']
@@ -1938,10 +2134,16 @@ def create_node():
                     parsed_bg_url = urlparse(background_url)
                     bg_params = parse_qs(parsed_bg_url.query)
                     bg_filename = bg_params.get('filename', [None])[0]
+                    bg_subfolder = bg_params.get('subfolder', [''])[0]
+                    bg_type = bg_params.get('type', ['output'])[0]
 
                     if bg_filename:
-                        background_image_url = f"/view?filename={urllib.parse.quote_plus(bg_filename)}&subfolder=&type=output"
-                        background_image_path = os.path.join(COMFYUI_OUTPUT_PATH, bg_filename)
+                        background_image_url = f"/view?filename={urllib.parse.quote_plus(bg_filename)}&subfolder={urllib.parse.quote_plus(bg_subfolder)}&type={urllib.parse.quote_plus(bg_type)}"
+                        background_image_path = ensure_local_comfyui_output_file(bg_filename, bg_subfolder, bg_type)
+                        segmented_results.append({
+                            'label': 'background',
+                            'path': background_image_url
+                        })
 
                         # 存入背景实体
                         database.add_entity_appearance(
@@ -1959,7 +2161,7 @@ def create_node():
             node_assets = {
                 "input": {"images": [f"/view?filename={source_image_filename}&subfolder=&type=input"]},
                 "output": {
-                    "images": [f"/view?filename={source_image_filename}&subfolder=&type=input"],
+                    "images": [],
                     "videos": [],
                     "audio": []
                 },
@@ -2090,16 +2292,29 @@ def create_node():
             positive_prompt = parameters.get('optimized_positive_prompt', parameters.get('positive_prompt', ''))
             workflow[prompt_t2i_node_id]["inputs"]["value"] = positive_prompt
 
+        prompt_negative_node_id = find_node_id_by_title(workflow, "CLIP Text Encode (Negative Prompt)")
+        if prompt_negative_node_id:
+            user_negative_prompt = parameters.get('negative_prompt') or parameters.get('optimized_negative_prompt', '')
+            current_negative_prompt = workflow[prompt_negative_node_id].get("inputs", {}).get("text", '')
+            workflow[prompt_negative_node_id]["inputs"]['text'] = append_prompt_text(
+                current_negative_prompt,
+                user_negative_prompt
+            )
         # ... 其他参数注入（保持不变）
         size_node_id = find_node_id_by_title(workflow, "Size_Setting")
         if size_node_id:
             if 'width' in parameters: workflow[size_node_id]["inputs"]["width"] = parameters['width']
             if 'height' in parameters: workflow[size_node_id]["inputs"]["height"] = parameters['height']
             if 'batch_size' in parameters and not isVideo: workflow[size_node_id]["inputs"]["batch_size"] = parameters['batch_size']
-            if 'time' in parameters: workflow[size_node_id]["inputs"]["length"] = parameters['time'] * 8 + 1
+            if 'time' in parameters: workflow[size_node_id]["inputs"]["length"] = seconds_to_video_length(parameters['time'], parameters.get('fps', 16))
             if 'speed' in parameters: workflow[size_node_id]["inputs"]["speed"] = parameters['speed']
             if 'camera_pose' in parameters: workflow[size_node_id]["inputs"]["camera_pose"] = parameters['camera_pose']
             if 'seconds' in parameters: workflow[size_node_id]["inputs"]["seconds"] = parameters['seconds']
+
+        if 'fps' in parameters:
+            for node in workflow.values():
+                if node.get("class_type") == "CreateVideo" and "inputs" in node:
+                    node["inputs"]["fps"] = parameters['fps']
 
         # 执行工作流
         queued_prompt = queue_comfyui_prompt(workflow)
@@ -2119,6 +2334,17 @@ def create_node():
 
     except Exception as e:
         print(f"主流程错误: {e}")
+        database.add_interaction_metric({
+            "event_type": "generation_error",
+            "tree_id": tree_id,
+            "node_id": node_id,
+            "module_id": final_module_id,
+            "prompt_input_view": data.get("prompt_input_view") or "workflow_form",
+            "prompt_text": parameters.get("positive_prompt") or parameters.get("optimized_positive_prompt") or parameters.get("text"),
+            "negative_prompt": parameters.get("negative_prompt") or parameters.get("optimized_negative_prompt"),
+            "generation_time_ms": round((time.perf_counter() - generation_start) * 1000, 2),
+            "payload": {"error": str(e), "parameters": parameters}
+        })
         return jsonify({"error": str(e)}), 500
 
     # 主流程保存节点
@@ -2134,6 +2360,24 @@ def create_node():
                 "status": 'completed'
             }
         )
+
+    if outputs:
+        database.add_interaction_metric({
+            "event_type": "generation",
+            "tree_id": tree_id,
+            "node_id": node_id,
+            "module_id": final_module_id,
+            "prompt_input_view": data.get("prompt_input_view") or "workflow_form",
+            "prompt_text": parameters.get("positive_prompt") or parameters.get("optimized_positive_prompt") or parameters.get("text"),
+            "negative_prompt": parameters.get("negative_prompt") or parameters.get("optimized_negative_prompt"),
+            "generation_time_ms": round((time.perf_counter() - generation_start) * 1000, 2),
+            "payload": {
+                "input_assets": normalized_request_input_assets,
+                "outputs": outputs,
+                "parameters": parameters,
+                "status": "completed"
+            }
+        })
 
     updated_tree = database.get_tree_as_json(tree_id)
     return jsonify(updated_tree), 201
@@ -2200,7 +2444,7 @@ def extract_entities():
 @app.route('/entities/<path:filename>')
 def serve_entities(filename):
     # as_attachment=False 确保是在浏览器预览而不是下载
-    return send_from_directory('entities', filename)
+    return send_from_directory(ENTITY_OUTPUT_DIR, filename, as_attachment=False)
 
 # --- 【核心修改】视频拼接 API 接口 (使用 moviepy) ---
 @app.route('/api/stitch', methods=['POST'])
@@ -2248,22 +2492,11 @@ def stitch_videos():
             query_params = urllib.parse.parse_qs(parsed_url.query)
             filename = query_params.get('filename', [None])[0]
             subfolder = query_params.get('subfolder', [''])[0]
+            file_type = query_params.get('type', ['output'])[0]
             if not filename:
                 raise ValueError(f"无法从视频轨路径解析文件名: {relative_path}")
 
-            # (构建绝对路径)
-            full_path = os.path.join(COMFYUI_OUTPUT_PATH, subfolder, filename)
-            if not os.path.exists(full_path):
-                full_path_alt = os.path.join(COMFYUI_OUTPUT_PATH, filename)
-                if not os.path.exists(full_path_alt):
-                   # (尝试 video 文件夹)
-                   full_path_video = os.path.join(COMFYUI_OUTPUT_PATH, 'video', filename)
-                   if not os.path.exists(full_path_video):
-                       raise FileNotFoundError(f"视频/图片文件未找到: {filename}")
-                   else:
-                       full_path = full_path_video
-                else:
-                    full_path = full_path_alt
+            full_path = resolve_stitch_media_path(relative_path)
 
             # (创建 MoviePy Clip 对象 - 不变)
             if clip_type == 'video':
@@ -2322,33 +2555,11 @@ def stitch_videos():
                 if not relative_path:
                     raise ValueError(f"音轨片段信息不完整: {clip_info}")
 
-                # (解析路径)
-                parsed_url = urllib.parse.urlparse(relative_path)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-                filename = query_params.get('filename', [None])[0]
-                subfolder = query_params.get('subfolder', [''])[0] # (应该是 'audio')
-                if not filename:
-                    raise ValueError(f"无法从音轨路径解析文件名: {relative_path}")
-
-                # (构建绝对路径 - 优先检查 subfolder)
-                full_path = os.path.join(COMFYUI_OUTPUT_PATH, subfolder, filename)
-                if not os.path.exists(full_path):
-                    # (备用：强制尝试 'audio' 文件夹)
-                    full_path_audio = os.path.join(COMFYUI_OUTPUT_PATH, 'audio', filename)
-                    if not os.path.exists(full_path_audio):
-                        # (备用：尝试根目录)
-                        full_path_alt = os.path.join(COMFYUI_OUTPUT_PATH, filename)
-                        if not os.path.exists(full_path_alt):
-                            raise FileNotFoundError(f"音频文件未找到: {filename} (尝试路径: {full_path}, {full_path_audio}, {full_path_alt})")
-                        else:
-                            full_path = full_path_alt
-                    else:
-                        full_path = full_path_audio
+                full_path = resolve_stitch_media_path(relative_path)
 
                 print(f"加载音频: {full_path}")
                 audio_clip = AudioFileClip(full_path)
 
-                # (v90 修复) 检查并应用音频剪辑的 duration
                 duration = clip_info.get('duration', audio_clip.duration)
                 try:
                     final_duration = float(duration)

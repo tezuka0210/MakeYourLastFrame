@@ -132,6 +132,22 @@ function logSpeechTiming(record, backendTiming) {
   }])
 }
 
+
+function postInteractionMetric(payload) {
+  try {
+    fetch('/api/metrics/record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true
+    }).catch(err => {
+      console.warn('[Interaction Metrics] Failed to save speech metric', err)
+    })
+  } catch (err) {
+    console.warn('[Interaction Metrics] Failed to save speech metric', err)
+  }
+}
+
 function appendText(baseText, addition) {
   const base = String(baseText || '').trim()
   const next = String(addition || '').trim()
@@ -289,6 +305,15 @@ export function startBrowserSpeechInput({
         success: true,
         backendTiming: result.timing
       }))
+      postInteractionMetric({
+        event_type: 'speech_input',
+        prompt_input_view: 'speech',
+        prompt_text: polished,
+        speech_timing: record,
+        payload: {
+          backendTiming: result.timing
+        }
+      })
       logSpeechTiming(record, result.timing)
     } catch (err) {
       timingState.responseReceivedTime = timingState.responseReceivedTime || nowMs()
@@ -299,6 +324,14 @@ export function startBrowserSpeechInput({
         success: false,
         errorMessage
       }))
+      postInteractionMetric({
+        event_type: 'speech_input',
+        prompt_input_view: 'speech',
+        speech_timing: record,
+        payload: {
+          errorMessage
+        }
+      })
       logSpeechTiming(record, null)
       if (onError) onError(err?.message || 'speech-transcription-error')
     } finally {

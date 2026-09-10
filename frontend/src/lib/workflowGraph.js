@@ -1166,6 +1166,23 @@ export function renderTree(
     return [...(a.images || []), ...(a.videos || []), ...(a.audio || [])].filter(Boolean)
   }
 
+  function appendNodeMediaAsset(node, bucket, url, forcedType = null) {
+    if (!node || !url) return []
+    if (!node.assets) node.assets = {}
+    if (!node.assets[bucket]) node.assets[bucket] = { images: [], videos: [], audio: [] }
+
+    const group = node.assets[bucket]
+    if (!Array.isArray(group.images)) group.images = []
+    if (!Array.isArray(group.videos)) group.videos = []
+    if (!Array.isArray(group.audio)) group.audio = []
+
+    const type = forcedType || deriveMediaKind(url)
+    const list = type === 'video' ? group.videos : type === 'audio' ? group.audio : group.images
+    if (!list.includes(url)) list.push(url)
+
+    return [...group.images, ...group.videos, ...group.audio]
+  }
+
   function getInputMediaState(node, state) {
     const input = node?.assets?.input || {}
     const imageUrls = Array.isArray(input.images) ? [...input.images] : []
@@ -1448,6 +1465,7 @@ function getMediaBoxState(node, boxKey = 'default') {
 
 function applyMediaBoxStyle(sel, boxState) {
   return sel
+    .attr('class', 'workflow-media-box')
     .style('position', 'relative')
     .style('width', '100%')
     .style('height', `${boxState.height}px`)
@@ -1564,6 +1582,7 @@ function addMediaBoxResizeHandle(box, boxState) {
       const boxState = getMediaBoxState(node, boxKey)
       const box = parent.append('xhtml:div')
       applyMediaBoxStyle(box, boxState)
+      box.attr('data-droppable', makeDroppable ? 'true' : 'false')
 
       const grid = buildMediaGrid(box, boxState)
       addMediaBoxResizeHandle(box, boxState)
@@ -1585,7 +1604,50 @@ function addMediaBoxResizeHandle(box, boxState) {
         observer.observe(box.node())
       }
 
+      const resolveDragPayload = (ev) => {
+        const rawJson = ev?.dataTransfer?.getData?.('application/json') || ''
+        const rawText = ev?.dataTransfer?.getData?.('text/plain') || ''
+        const rawUri = ev?.dataTransfer?.getData?.('text/uri-list') || ''
+
+        try {
+          return JSON.parse(rawJson || rawText || rawUri || '{}')
+        } catch (e) {
+          return { url: rawText || rawUri || '' }
+        }
+      }
+
+      const handleDroppedPayload = (dragData = {}) => {
+        if (!onDropMedia) return
+        if (!dragData || Object.keys(dragData).length === 0) {
+          dragData = window.__workflowDragData || {}
+        }
+
+        const resolvedUrl =
+          dragData?.mediaUrl ||
+          dragData?.originalUrl ||
+          dragData?.fullUrl ||
+          dragData?.imageUrl ||
+          dragData?.url ||
+          dragData?.thumbnailUrl ||
+          dragData?.clip?.mediaUrl ||
+          dragData?.clip?.originalUrl ||
+          dragData?.clip?.fullUrl ||
+          dragData?.clip?.imageUrl ||
+          dragData?.clip?.url ||
+          dragData?.clip?.thumbnailUrl ||
+          ''
+
+        if (resolvedUrl) onDropMedia(resolvedUrl, dragData)
+      }
+
       if (makeDroppable) {
+        box.node()?.addEventListener('workflow-media-pointer-drop', ev => {
+          ev.preventDefault()
+          ev.stopPropagation()
+          box.style('border-color', '#d1d5db').style('background', '#ffffff')
+          handleDroppedPayload(ev.detail?.payload || window.__workflowDragData || {})
+        })
+
         box
           .on('dragover', ev => {
             ev.preventDefault()
@@ -1603,32 +1665,7 @@ function addMediaBoxResizeHandle(box, boxState) {
             box.style('border-color', '#d1d5db').style('background', '#ffffff')
             if (!onDropMedia) return
 
-            const rawJson = ev.dataTransfer.getData('application/json')
-            const rawText = ev.dataTransfer.getData('text/plain')
-            let dragData = null
-
-            try {
-              dragData = JSON.parse(rawJson || rawText || '{}')
-            } catch (e) {
-              dragData = { url: rawText || '' }
-            }
-
-            const resolvedUrl =
-              dragData?.mediaUrl ||
-              dragData?.originalUrl ||
-              dragData?.fullUrl ||
-              dragData?.imageUrl ||
-              dragData?.url ||
-              dragData?.thumbnailUrl ||
-              dragData?.clip?.mediaUrl ||
-              dragData?.clip?.originalUrl ||
-              dragData?.clip?.fullUrl ||
-              dragData?.clip?.imageUrl ||
-              dragData?.clip?.url ||
-              dragData?.clip?.thumbnailUrl ||
-              ''
-
-            if (resolvedUrl) onDropMedia(resolvedUrl, dragData)
+            handleDroppedPayload(resolveDragPayload(ev))
           })
       }
 
@@ -1666,10 +1703,89 @@ function addMediaBoxResizeHandle(box, boxState) {
     selection
       .attr('draggable', true)
       .style('cursor', 'grab')
+      .on('mousedown.workflow-pointer-fallback', function (ev) {
+        if (ev.button !== 0) return
+        if (ev.target?.closest?.('button')) return
+
+        ev.stopPropagation()
+
+        const startX = ev.clientX
+        const startY = ev.clientY
+        const payload = payloadFactory(this) || {}
+        let moved = false
+
+        const cleanup = () => {
+          document.removeEventListener('mousemove', onMove, true)
+          document.removeEventListener('mouseup', onUp, true)
+          document.body.style.cursor = ''
+          d3.select(this).style('cursor', 'grab')
+        }
+
+        const onMove = (moveEv) => {
+          if (!moved && Math.hypot(moveEv.clientX - startX, moveEv.clientY - startY) < 5) {
+            return
+          }
+          moved = true
+          document.body.style.cursor = 'grabbing'
+          d3.select(this).style('cursor', 'grabbing')
+        }
+
+        const onUp = (upEv) => {
+          cleanup()
+          if (!moved) return
+
+          const board = document.getElementById('drawing-board')
+          const target = document.elementFromPoint(upEv.clientX, upEv.clientY)
+
+          const mediaBox = target?.closest?.('.workflow-media-box[data-droppable="true"]')
+          if (mediaBox) {
+            upEv.preventDefault()
+            mediaBox.dispatchEvent(new CustomEvent('workflow-media-pointer-drop', {
+              bubbles: true,
+              detail: { payload }
+            }))
+            return
+          }
+
+          const bufferStrip = target?.closest?.('#buffer-strip')
+          if (bufferStrip) {
+            upEv.preventDefault()
+            window.dispatchEvent(new CustomEvent('canvas-export-to-buffer', {
+              detail: {
+                clips: [{
+                  ...payload,
+                  nodeId: payload.nodeId || `workflow-buffer-${Date.now()}`,
+                  type: payload.type || deriveMediaKind(payload.mediaUrl || payload.url),
+                  mediaUrl: payload.mediaUrl || payload.url,
+                  thumbnailUrl: payload.thumbnailUrl || payload.mediaUrl || payload.url,
+                  filename: payload.filename || payload.displayName || payload.moduleId || 'Workflow asset'
+                }]
+              }
+            }))
+            return
+          }
+
+          if (!board || !target || !board.contains(target)) return
+
+          upEv.preventDefault()
+          window.dispatchEvent(new CustomEvent('workflow-media-drop-on-canvas', {
+            detail: {
+              payload,
+              fromExternalDrag: true,
+              clientX: upEv.clientX,
+              clientY: upEv.clientY
+            }
+          }))
+        }
+
+        document.addEventListener('mousemove', onMove, true)
+        document.addEventListener('mouseup', onUp, true)
+      })
       .on('dragstart', function (ev) {
         ev.stopPropagation()
         const payload = payloadFactory(this) || {}
         const json = JSON.stringify(payload)
+        window.__workflowDragData = payload
 
         if (ev.dataTransfer) {
           ev.dataTransfer.effectAllowed = 'copy'
@@ -1681,6 +1797,9 @@ function addMediaBoxResizeHandle(box, boxState) {
         }
       })
       .on('dragend', function () {
+        window.setTimeout(() => {
+          window.__workflowDragData = null
+        }, 100)
         d3.select(this).style('cursor', 'grab')
       })
   }
@@ -1776,10 +1895,12 @@ function addMediaBoxResizeHandle(box, boxState) {
       if (type === 'image') {
         tile.append('xhtml:img')
           .attr('src', url)
+          .attr('draggable', false)
           .style('width', '100%')
           .style('height', '100%')
           .style('object-fit', 'cover')
           .style('display', 'block')
+          .style('pointer-events', 'none')
       } else if (type === 'video') {
         tile.append('xhtml:video')
           .attr('src', url)
@@ -1787,10 +1908,12 @@ function addMediaBoxResizeHandle(box, boxState) {
           .attr('muted', true)
           .attr('loop', true)
           .attr('playsinline', true)
+          .attr('draggable', false)
           .style('width', '100%')
           .style('height', '100%')
           .style('object-fit', 'cover')
           .style('display', 'block')
+          .style('pointer-events', 'none')
       } else {
         tile.append('xhtml:div')
           .style('width', '100%')
@@ -2643,15 +2766,11 @@ function addMediaBoxResizeHandle(box, boxState) {
       const list = Array.isArray(urls) ? urls : []
       list.forEach(url => {
         const resolvedType = forcedType || deriveMediaKind(url)
-        if (resolvedType === 'video') {
-          if (!mediaState.videoUrls.includes(url)) mediaState.videoUrls.push(url)
-        } else if (resolvedType === 'audio') {
-          if (!mediaState.audioUrls.includes(url)) mediaState.audioUrls.push(url)
-        } else {
-          if (!mediaState.imageUrls.includes(url)) mediaState.imageUrls.push(url)
-        }
+        state.inputUrls = appendNodeMediaAsset(node, 'input', url, resolvedType)
+        mediaState.imageUrls = [...(node.assets?.input?.images || [])]
+        mediaState.videoUrls = [...(node.assets?.input?.videos || [])]
+        mediaState.audioUrls = [...(node.assets?.input?.audio || [])]
       })
-      state.inputUrls = syncNodeInputAssets(node, mediaState)
     }
 
     const sec = buildCollapsibleSection(parent, 'Assets', true, (controls) => {
@@ -2712,6 +2831,25 @@ function addMediaBoxResizeHandle(box, boxState) {
     const hasSegment = hasSegmentData(node)
     const isSegmentNode = isSegmentOnlyNode(node)
     const segmentHostKey = getSegmentHostKey(node)
+    const appendOutputMedia = (resolvedUrl, dragData = {}) => {
+      const resolvedType = dragData?.type || dragData?.clip?.type || deriveMediaKind(resolvedUrl)
+      state.outputUrls = appendNodeMediaAsset(node, 'output', resolvedUrl, resolvedType)
+      renderOutputRows()
+    }
+
+    const renderOutputRows = () => {
+      root.selectAll('*').remove()
+      renderThumbRow(root, state.outputUrls || [], {
+        emptyText: 'No generated results yet',
+        boxed: true,
+        makeDroppable: true,
+        node,
+        boxKey: 'results',
+        onDropMedia: appendOutputMedia,
+        onThumbClick: (url, type) => emit('open-preview', url, type),
+        onStageClick: (url, type) => emit('add-clip', node, url, type)
+      })
+    }
 
     // 情况 A：segment 节点
     // 只显示 segment 内容，不显示原 generate results
@@ -2750,21 +2888,9 @@ function addMediaBoxResizeHandle(box, boxState) {
 
     // 情况 B：普通生成节点
     if (hasOutput) {
-      renderThumbRow(root, outputUrls, {
-        emptyText: 'No generated results yet',
-        boxed: true,
-        node,
-        boxKey: 'results',
-        onThumbClick: (url, type) => emit('open-preview', url, type),
-        onStageClick: (url, type) => emit('add-clip', node, url, type)
-      })
+      renderOutputRows()
     } else {
-      renderThumbRow(root, [], {
-        emptyText: 'No generated results yet',
-        boxed: true,
-        node,
-        boxKey: 'results'
-      })
+      renderOutputRows()
     }
 
     return sec

@@ -25,7 +25,10 @@
           ]"
           :style="getBufferItemStyle(clip)"
           :title="clip.filename || clip.name || clip.nodeId || 'Buffer asset'"
+          data-stitch-track="buffer"
+          :data-stitch-index="index"
           draggable="true"
+          @mousedown="handlePointerDragStart('buffer', index, $event)"
           @dragstart="handleDragStart('buffer', index, $event)"
           @dragover.prevent="onBufferDragOver(index, $event)"
           @dragleave="onBufferDragLeave"
@@ -88,6 +91,7 @@
         id="stitching-panel"
         class="track-panel track-panel-video"
         :class="{ 'drag-over': isDraggingOverContainer === 'video' }"
+        data-stitch-container="video"
         @dragover.prevent="handleDragOverContainer('video')"
         @dragleave="handleDragLeaveContainer"
         @drop="handleDropContainer('video')"
@@ -102,7 +106,10 @@
               { dragging: draggedClip?.track === 'video' && draggedClip?.index === index }
             ]"
             :style="{ width: videoClipWidths[index] }"
+            data-stitch-track="video"
+            :data-stitch-index="index"
             draggable="true"
+            @mousedown="handlePointerDragStart('video', index, $event)"
             @dragstart="handleDragStart('video', index, $event)"
             @dragover.prevent="handleDragOverItem('video', index)"
             @dragleave="handleDragLeaveItem"
@@ -158,6 +165,7 @@
         id="audio-stitching-panel"
         class="track-panel track-panel-audio"
         :class="{ 'drag-over': isDraggingOverContainer === 'audio' }"
+        data-stitch-container="audio"
         @dragover.prevent="handleDragOverContainer('audio')"
         @dragleave="handleDragLeaveContainer"
         @drop="handleDropContainer('audio')"
@@ -169,7 +177,10 @@
             class="audio-clip-item"
             :class="{ dragging: draggedClip?.track === 'audio' && draggedClip?.index === index }"
             :style="{ width: audioClipWidths[index] }"
+            data-stitch-track="audio"
+            :data-stitch-index="index"
             draggable="true"
+            @mousedown="handlePointerDragStart('audio', index, $event)"
             @dragstart="handleDragStart('audio', index, $event)"
             @dragover.prevent="handleDragOverItem('audio', index)"
             @dragleave="handleDragLeaveItem"
@@ -249,7 +260,8 @@ const {
   handleTimelineScroll,
   handleTimelineMouseDown,
   handleTimelineMouseMove,
-  handleTimelineMouseUp
+  handleTimelineMouseUp,
+  handlePointerDragStart
 } = useStitching(props, emit)
 
 function handleCanvasExportToBuffer(event: Event) {

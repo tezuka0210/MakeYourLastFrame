@@ -1,8 +1,78 @@
 import json
+import re
 from langchain_core.prompts import ChatPromptTemplate
 from .state import AgentState
 from .llm_config import create_chat_llm
 from .prompt_agent import _normalize_cue_list, _serialize_cues
+
+PRESERVATION_KEYWORDS = (
+    "keep", "preserve", "retain", "maintain", "unchanged", "same", "original",
+    "do not change", "don't change", "without changing",
+    "保持", "保留", "不变", "不要改变", "不能改变", "不修改", "不移动", "原样"
+)
+
+PRESERVATION_DEFAULT_CUES = [
+    "preserve original subject identity",
+    "preserve original face",
+    "preserve original clothing",
+    "preserve original pose",
+    "preserve original position",
+    "preserve original scale",
+    "preserve original composition",
+    "preserve original camera angle",
+    "preserve original lighting direction",
+]
+
+PRESERVATION_NEGATIVE_CUES = [
+    "changed identity",
+    "changed face",
+    "changed clothing",
+    "changed pose",
+    "changed position",
+    "changed scale",
+    "changed composition",
+    "changed camera angle",
+    "inconsistent lighting",
+    "subject drift",
+]
+
+
+def _contains_preservation_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(keyword in lowered for keyword in PRESERVATION_KEYWORDS)
+
+
+def _append_unique_cue(cues, text: str, weight: float, cue_type: str = "relation"):
+    key = text.strip().lower()
+    if not key:
+        return
+    for cue in cues:
+        if str(cue.get("text", "")).strip().lower() == key:
+            cue["weight"] = max(float(cue.get("weight", 1.0)), weight)
+            cue["type"] = cue.get("type") or cue_type
+            return
+    cues.append({"text": text, "weight": weight, "type": cue_type})
+
+
+def _reinforce_preservation_cues(final_prompts: dict, user_input: str) -> dict:
+    if not _contains_preservation_request(user_input):
+        return final_prompts
+
+    positive_cues = list(final_prompts.get("positive_cues") or [])
+    negative_cues = list(final_prompts.get("negative_cues") or [])
+
+    for cue in PRESERVATION_DEFAULT_CUES:
+        _append_unique_cue(positive_cues, cue, 1.6, "relation")
+    for cue in PRESERVATION_NEGATIVE_CUES:
+        _append_unique_cue(negative_cues, cue, 1.4, "attribute")
+
+    positive_cues.sort(key=lambda c: c["weight"], reverse=True)
+    negative_cues.sort(key=lambda c: c["weight"], reverse=True)
+    final_prompts["positive_cues"] = positive_cues
+    final_prompts["negative_cues"] = negative_cues
+    final_prompts["positive"] = _serialize_cues(positive_cues)
+    final_prompts["negative"] = _serialize_cues(negative_cues)
+    return final_prompts
 
 def final_prompt_agent_node(state: AgentState):
     print("--- Running Prompt Agent (Plain Text Mode) ---")
@@ -42,15 +112,17 @@ def final_prompt_agent_node(state: AgentState):
     ### CRITICAL FORMATTING RULES
     1. **Structure:** You MUST write a visual description sentence starting with phrases like "The image features...", "The scene displays...", or "A view of...".
     2. **Content:** You MUST use all the visual elements provided in {masked_input} exactly as they are, without modifying any words or adding/removing any vocabulary.
-    3. **FORBIDDEN:**
+    3. **Preservation is mandatory:** If the input contains keep, preserve, retain, unchanged, same, original, do not change, 保持, 保留, 不变, 不移动, or similar wording, treat it as the highest-priority edit constraint. The positive prompt MUST explicitly include the unchanged subject identity, face, clothing, pose, position, scale, composition, camera angle, and lighting direction whenever relevant.
+    4. **Image-to-image editing rule:** For uploaded-image or image-to-image edits, the source image is the visual anchor. Do not omit constraints such as "person unchanged", "position unchanged", "keep objects in the same place", or "keep the scene unchanged"; restate them as concrete preservation phrases.
+    5. **FORBIDDEN:**
        - DO NOT write narratives like "discussing", "talking", "thinking".
        - DO NOT treat elements as people unless the keyword says "person".
        - These are visual tags, not characters in a story.
 
     ### OUTPUT JSON
     {{
-        "positive": "The image features [all input elements exactly as provided]...",
-        "negative": "low quality..."
+        "positive": "The image features [all input elements exactly as provided], preserve original subject identity, preserve original pose, preserve original position...",
+        "negative": "low quality, changed identity, changed pose, changed position..."
     }}
     """
 
@@ -101,6 +173,8 @@ def final_prompt_agent_node(state: AgentState):
         final_prompts["positive"] = _serialize_cues(final_prompts["positive_cues"])
     if final_prompts["negative_cues"]:
         final_prompts["negative"] = _serialize_cues(final_prompts["negative_cues"])
+
+    final_prompts = _reinforce_preservation_cues(final_prompts, user_input)
 
     print(f"AGENCY: Final Prompt Output: {final_prompts['positive']}")
     print(f"AGENCY: Preserved {len(final_prompts['positive_cues'])} user-edited cues")

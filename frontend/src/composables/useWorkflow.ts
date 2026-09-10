@@ -499,6 +499,8 @@ function toggleNodeCollapse(nodeId: string) {
 
   /** (Action) 提交生成请求（仅传递参数，不处理业务逻辑） */
   async function handleGenerate(nodeId:string, moduleId: string, parameters: Record<string, any>,nodeTitle: string) {
+    const interactionStart = performance.now();
+    let generationSucceeded = false;
     isGenerating.value = true;
     showStatus('正在提交生成请求...');
     const currentNode = allNodes.value.find(n => n.id === nodeId);
@@ -571,6 +573,7 @@ function toggleNodeCollapse(nodeId: string) {
          // 4. 接收后端返回的更新后的数据并刷新视图
         const updatedTree: { nodes: DbNode[] } = await response.json();
         processTreeData(updatedTree.nodes, '生成操作完成');
+        generationSucceeded = true;
 
       }else{
         let parentIds = [...selectedParentIds.value] // 复制
@@ -601,6 +604,7 @@ function toggleNodeCollapse(nodeId: string) {
          // 4. 接收后端返回的更新后的数据并刷新视图
         const updatedTree: { nodes: DbNode[] } = await response.json();
         processTreeData(updatedTree.nodes, '生成操作完成');
+        generationSucceeded = true;
 
       }
 
@@ -609,6 +613,27 @@ function toggleNodeCollapse(nodeId: string) {
       alert(error.message || 'Generation failed. Please try again.');
       showStatus('生成失败');
     } finally {
+      fetch('/api/metrics/record', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: 'generation_interaction',
+          tree_id: 1,
+          node_id: nodeId,
+          module_id: moduleId,
+          prompt_input_view: 'workflow_form',
+          prompt_text: parameters.positive_prompt || parameters.prompt || parameters.text || '',
+          negative_prompt: parameters.negative_prompt || '',
+          interaction_time_ms: Number((performance.now() - interactionStart).toFixed(2)),
+          payload: {
+            status: generationSucceeded ? 'completed' : 'failed',
+            title: nodeTitle
+          }
+        }),
+        keepalive: true
+      }).catch(err => {
+        console.warn('[Interaction Metrics] Failed to save generation interaction metric', err)
+      });
       isGenerating.value = false;
     }
   }

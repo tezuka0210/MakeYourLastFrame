@@ -332,14 +332,7 @@ export function useStitching(props, emit) {
     return null
   }
 
-  // trackType: 'buffer' | 'video' | 'audio'
-  function handleDragStart(trackType, index, e) {
-    draggedClip.value = { track: trackType, index }
-
-    if (!e?.dataTransfer) return
-
-    e.dataTransfer.effectAllowed = 'move'
-
+  function buildStitchDragPayload(trackType, index) {
     const info = getListAndEventByTrack(trackType)
     const rawClip = info?.raw?.[index] || info?.list?.[index] || null
 
@@ -369,6 +362,20 @@ export function useStitching(props, emit) {
       source: rawClip?.source || trackType,
     }
 
+    return { payload, rawClip }
+  }
+
+  // trackType: 'buffer' | 'video' | 'audio'
+  function handleDragStart(trackType, index, e) {
+    const dragSource = { track: trackType, index }
+    draggedClip.value = dragSource
+    window.__stitchingDragClip = dragSource
+
+    if (!e?.dataTransfer) return
+
+    e.dataTransfer.effectAllowed = 'move'
+
+    const { payload } = buildStitchDragPayload(trackType, index)
 
     const json = JSON.stringify(payload)
 
@@ -388,9 +395,96 @@ export function useStitching(props, emit) {
     }
   }
 
+  function getActiveDraggedClip() {
+    return draggedClip.value || window.__stitchingDragClip || null
+  }
+
   function handleDragOverItem(trackType, index) {
     draggedOver.value = { track: trackType, index }
     isDraggingOverContainer.value = null
+  }
+
+  function handlePointerDragStart(trackType, index, e) {
+    if (e?.button !== 0) return
+    const dragSource = { track: trackType, index }
+    const startX = e.clientX
+    const startY = e.clientY
+    let moved = false
+
+    const cleanup = () => {
+      document.removeEventListener('mousemove', onMove, true)
+      document.removeEventListener('mouseup', onUp, true)
+      document.body.style.cursor = ''
+      draggedOver.value = null
+      isDraggingOverContainer.value = null
+      window.setTimeout(() => {
+        if (window.__stitchingDragClip === dragSource) {
+          window.__stitchingDragClip = null
+        }
+      }, 100)
+    }
+
+    const onMove = (moveEvent) => {
+      if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 5) {
+        return
+      }
+      moved = true
+      draggedClip.value = dragSource
+      window.__stitchingDragClip = dragSource
+      document.body.style.cursor = 'grabbing'
+    }
+
+    const onUp = (upEvent) => {
+      cleanup()
+      if (!moved) return
+
+      const target = document.elementFromPoint(upEvent.clientX, upEvent.clientY)
+      const { payload } = buildStitchDragPayload(trackType, index)
+      const mediaBox = target?.closest?.('.workflow-media-box[data-droppable="true"]')
+      if (mediaBox) {
+        upEvent.preventDefault()
+        mediaBox.dispatchEvent(new CustomEvent('workflow-media-pointer-drop', {
+          bubbles: true,
+          detail: { payload }
+        }))
+        return
+      }
+
+      const board = document.getElementById('drawing-board')
+      if (board && target && board.contains(target)) {
+        upEvent.preventDefault()
+        window.dispatchEvent(new CustomEvent('workflow-media-drop-on-canvas', {
+          detail: {
+            payload,
+            fromExternalDrag: true,
+            clientX: upEvent.clientX,
+            clientY: upEvent.clientY
+          }
+        }))
+        return
+      }
+
+      const item = target?.closest?.('[data-stitch-track][data-stitch-index]')
+      if (item) {
+        const targetTrack = item.getAttribute('data-stitch-track')
+        let targetIndex = Number(item.getAttribute('data-stitch-index'))
+        if (targetTrack === 'buffer') {
+          const rect = item.getBoundingClientRect()
+          if (upEvent.clientX - rect.left > rect.width / 2) targetIndex += 1
+        }
+        handleDropOnItem(targetTrack, targetIndex)
+        return
+      }
+
+      const container = target?.closest?.('[data-stitch-container]')
+      const targetTrack = container?.getAttribute?.('data-stitch-container')
+      if (targetTrack) {
+        handleDropContainer(targetTrack)
+      }
+    }
+
+    document.addEventListener('mousemove', onMove, true)
+    document.addEventListener('mouseup', onUp, true)
   }
 
   function handleDragLeaveItem() {
@@ -411,7 +505,7 @@ export function useStitching(props, emit) {
    * - buffer → video/audio：从 buffer 移除，插入到对应轨道的指定位置
    */
   function handleDropOnItem(targetTrack, targetIndex) {
-    const src = draggedClip.value
+    const src = getActiveDraggedClip()
     if (!src) return
 
     // ① 同轨道重排
@@ -431,6 +525,8 @@ export function useStitching(props, emit) {
 
       emit(info.event, list)
       draggedOver.value = null
+      draggedClip.value = null
+      window.__stitchingDragClip = null
       return
     }
 
@@ -461,6 +557,7 @@ export function useStitching(props, emit) {
 
       draggedOver.value = null
       draggedClip.value = null
+      window.__stitchingDragClip = null
       return
     }
 
@@ -468,7 +565,12 @@ export function useStitching(props, emit) {
   }
 
   function handleDragEnd() {
-    draggedClip.value = null
+    window.setTimeout(() => {
+      if (window.__stitchingDragClip === draggedClip.value) {
+        window.__stitchingDragClip = null
+      }
+      draggedClip.value = null
+    }, 100)
     draggedOver.value = null
     isDraggingOverContainer.value = null
   }
@@ -490,7 +592,7 @@ export function useStitching(props, emit) {
    * - buffer → video/audio：从 buffer 删除，追加到轨道末尾
    */
   function handleDropContainer(targetTrack) {
-    const src = draggedClip.value
+    const src = getActiveDraggedClip()
     if (!src || (targetTrack !== 'video' && targetTrack !== 'audio')) {
       console.warn('Invalid container drop.')
       return
@@ -509,6 +611,7 @@ export function useStitching(props, emit) {
       emit(info.event, list)
       isDraggingOverContainer.value = null
       draggedClip.value = null
+      window.__stitchingDragClip = null
       return
     }
 
@@ -538,6 +641,7 @@ export function useStitching(props, emit) {
 
       isDraggingOverContainer.value = null
       draggedClip.value = null
+      window.__stitchingDragClip = null
       return
     }
 
@@ -566,6 +670,7 @@ export function useStitching(props, emit) {
     // 缩放 & 拖拽
     handleZoom,
     handleDragStart,
+    handlePointerDragStart,
     handleDragOverItem,
     handleDragLeaveItem,
     handleDropOnItem,

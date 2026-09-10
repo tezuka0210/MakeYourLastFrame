@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import dashscope
 from http import HTTPStatus # 用于检查API响应状态
 from flask import Flask, request, jsonify
@@ -6,7 +7,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 # --- 初始化和配置 ---
-load_dotenv() # 加载 .env 文件中的环境变量
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True) # 加载 backend/.env 文件中的环境变量
 
 app = Flask(__name__)
 # 启用CORS，允许你的前端页面访问这个API
