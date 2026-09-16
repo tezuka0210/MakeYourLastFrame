@@ -75,6 +75,7 @@ CLIENT_ID = str(uuid.uuid4()) # 为我们的后端应用生成一个唯一的客
 # UPLOAD_FOLDER = 'assets'
 # os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 COMFYUI_SERVER_ADDRESS = os.getenv("COMFYUI_SERVER_ADDRESS", COMFYUI_SERVER_ADDRESS)
+AUDIO_COMFYUI_SERVER_ADDRESS = os.getenv("AUDIO_COMFYUI_SERVER_ADDRESS", COMFYUI_SERVER_ADDRESS)
 
 if APP_MODE == 'local':
     # 本地模式：使用 backend/local_assets 文件夹
@@ -106,14 +107,19 @@ os.makedirs(STITCHED_OUTPUT_FOLDER, exist_ok=True)
 
 # --- 2. 核心辅助函数 ---
 
-def comfyui_http_url(path: str = "") -> str:
-    base = COMFYUI_SERVER_ADDRESS.strip().rstrip("/")
+def get_comfyui_server_address(module_id: str | None = None, media_type: str | None = None) -> str:
+    if module_id == "TextToAudio" or media_type == "audio":
+        return AUDIO_COMFYUI_SERVER_ADDRESS
+    return COMFYUI_SERVER_ADDRESS
+
+def comfyui_http_url(path: str = "", server_address: str | None = None) -> str:
+    base = (server_address or COMFYUI_SERVER_ADDRESS).strip().rstrip("/")
     if not base.startswith(("http://", "https://")):
         base = f"http://{base}"
     return f"{base}{path}"
 
-def comfyui_ws_url(path: str = "") -> str:
-    base = COMFYUI_SERVER_ADDRESS.strip().rstrip("/")
+def comfyui_ws_url(path: str = "", server_address: str | None = None) -> str:
+    base = (server_address or COMFYUI_SERVER_ADDRESS).strip().rstrip("/")
     if base.startswith("https://"):
         base = "wss://" + base[len("https://"):]
     elif base.startswith("http://"):
@@ -340,7 +346,7 @@ def load_workflow(module_id: str) -> Optional[dict]:
     with open(workflow_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def queue_comfyui_prompt(workflow: dict) -> dict:
+def queue_comfyui_prompt(workflow: dict, server_address: str | None = None) -> dict:
     """将工作流提交到ComfyUI的队列中。"""
     prompt_data = {"prompt": workflow, "client_id": CLIENT_ID}
     print(">>> 正在向ComfyUI提交工作流...")
@@ -350,18 +356,18 @@ def queue_comfyui_prompt(workflow: dict) -> dict:
     print(json.dumps(workflow, indent=2, ensure_ascii=False))
     print("----------------------------------------------------")
     
-    response = requests.post(comfyui_http_url("/prompt"), json=prompt_data)
+    response = requests.post(comfyui_http_url("/prompt", server_address), json=prompt_data)
     response.raise_for_status()
     print("<<< ComfyUI已接受任务。")
     return response.json()
 
-def get_comfyui_outputs(prompt_id: str) -> dict:
+def get_comfyui_outputs(prompt_id: str, server_address: str | None = None) -> dict:
     """
     通过WebSocket连接，等待ComfyUI任务执行完成，并获取输出结果。
     这是处理耗时任务的关键。
     """
     ws = websocket.WebSocket()
-    ws.connect(comfyui_ws_url(f"/ws?clientId={CLIENT_ID}"))
+    ws.connect(comfyui_ws_url(f"/ws?clientId={CLIENT_ID}", server_address))
     
     while True:
         try:
@@ -379,7 +385,7 @@ def get_comfyui_outputs(prompt_id: str) -> dict:
     ws.close()
 
     # 从/history API获取最终的输出信息
-    history_response = requests.get(comfyui_http_url(f"/history/{prompt_id}"))
+    history_response = requests.get(comfyui_http_url(f"/history/{prompt_id}", server_address))
     history_response.raise_for_status()
     history = history_response.json()
     # --- 【请在这里添加关键调试代码】---
@@ -1335,6 +1341,7 @@ def view_file():
     filename = request.args.get("filename")
     subfolder = request.args.get("subfolder", "")
     file_type = request.args.get("type", "output") # (v89 修复) 1. 读取 'type' 参数
+    media_type = "audio" if subfolder == "audio" or Path(filename or "").suffix.lower() in {".mp3", ".wav", ".flac", ".m4a", ".ogg"} else None
 
     if not filename:
         return abort(400, "缺少 filename 参数")
@@ -1346,7 +1353,7 @@ def view_file():
             if request.headers.get("Range"):
                 remote_headers["Range"] = request.headers["Range"]
             remote_response = requests.get(
-                comfyui_http_url("/view"),
+                comfyui_http_url("/view", get_comfyui_server_address(media_type=media_type)),
                 params={"filename": filename, "subfolder": subfolder, "type": file_type},
                 headers=remote_headers,
                 stream=True,
@@ -2317,9 +2324,10 @@ def create_node():
                     node["inputs"]["fps"] = parameters['fps']
 
         # 执行工作流
-        queued_prompt = queue_comfyui_prompt(workflow)
+        comfyui_server_address = get_comfyui_server_address(final_module_id)
+        queued_prompt = queue_comfyui_prompt(workflow, comfyui_server_address)
         prompt_id = queued_prompt['prompt_id']
-        outputs = get_comfyui_outputs(prompt_id)
+        outputs = get_comfyui_outputs(prompt_id, comfyui_server_address)
         batch_size = parameters.get('batch_size', 1)
         toVideos = isVideo and batch_size > 1
 
@@ -2327,9 +2335,9 @@ def create_node():
             sampleradv_node_id = find_node_id_by_title(workflow, "KSamplerAdvanced2")
             for i in range(1, batch_size):
                 workflow[sampleradv_node_id]["inputs"]["noise_seed"] = random.randint(0, 999999999999999)
-                queued_prompt = queue_comfyui_prompt(workflow)
+                queued_prompt = queue_comfyui_prompt(workflow, comfyui_server_address)
                 prompt_id = queued_prompt['prompt_id']
-                batch_outputs = get_comfyui_outputs(prompt_id)
+                batch_outputs = get_comfyui_outputs(prompt_id, comfyui_server_address)
                 outputs["images"].extend(batch_outputs.get("images", []))
 
     except Exception as e:

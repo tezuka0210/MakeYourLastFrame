@@ -1711,7 +1711,12 @@ function addMediaBoxResizeHandle(box, boxState) {
 
         const startX = ev.clientX
         const startY = ev.clientY
-        const payload = payloadFactory(this) || {}
+        const dragSessionId = `workflow-drag-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        this.__canvasDragSessionId = dragSessionId
+        const payload = {
+          ...(payloadFactory(this) || {}),
+          __canvasDragSessionId: dragSessionId,
+        }
         let moved = false
 
         const cleanup = () => {
@@ -1783,7 +1788,13 @@ function addMediaBoxResizeHandle(box, boxState) {
       })
       .on('dragstart', function (ev) {
         ev.stopPropagation()
-        const payload = payloadFactory(this) || {}
+        const dragSessionId = this.__canvasDragSessionId
+          || `workflow-drag-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        this.__canvasDragSessionId = dragSessionId
+        const payload = {
+          ...(payloadFactory(this) || {}),
+          __canvasDragSessionId: dragSessionId,
+        }
         const json = JSON.stringify(payload)
         window.__workflowDragData = payload
 
@@ -1797,8 +1808,12 @@ function addMediaBoxResizeHandle(box, boxState) {
         }
       })
       .on('dragend', function () {
+        const dragSessionId = this.__canvasDragSessionId
         window.setTimeout(() => {
           window.__workflowDragData = null
+          if (this.__canvasDragSessionId === dragSessionId) {
+            this.__canvasDragSessionId = null
+          }
         }, 100)
         d3.select(this).style('cursor', 'grab')
       })

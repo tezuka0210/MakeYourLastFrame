@@ -3,7 +3,7 @@
     <!-- Top Title Bar -->
     <header class="title-bar">
       <div class="title-main">
-        <h1>Make Your Final Frame: Re-Authoring Visual Assets for Iterative Keyframe Creation</h1>
+        <h1>Backlot: Shared Visual Composition for Iterative Ideation of Generative Video Keyframes</h1>
       </div>
     </header>
 

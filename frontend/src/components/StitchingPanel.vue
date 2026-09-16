@@ -292,6 +292,15 @@ function updateBufferCardHeight() {
 
 function getBufferItemStyle(clip: any) {
   const h = bufferCardHeight.value
+  const frameColor = /^#[0-9a-f]{6}$/i.test(String(clip.frameColor || ''))
+    ? String(clip.frameColor)
+    : null
+  const frameAccent = frameColor
+    ? {
+        borderColor: frameColor,
+        boxShadow: `inset 0 3px 0 ${frameColor}, 0 1px 2px rgba(15, 23, 42, 0.05)`,
+      }
+    : {}
 
   if (clip.type === 'audio') {
     return {
@@ -300,6 +309,7 @@ function getBufferItemStyle(clip: any) {
       minWidth: `${Math.max(96, Math.round(h * 1.55))}px`,
       boxSizing: 'border-box',
       flex: '0 0 auto',
+      ...frameAccent,
     }
   }
 
@@ -315,6 +325,7 @@ function getBufferItemStyle(clip: any) {
     minWidth: `${w}px`,
     boxSizing: 'border-box',
     flex: '0 0 auto',
+    ...frameAccent,
   }
 }
 

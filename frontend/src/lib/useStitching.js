@@ -9,6 +9,7 @@ export function useStitching(props, emit) {
   const draggedClip = ref(null)              // { track: 'video' | 'audio', index }
   const draggedOver = ref(null)              // { track: 'video' | 'audio', index }
   const isDraggingOverContainer = ref(null)  // 'video' | 'audio' | null
+  let activeCanvasDragSessionId = null
 
   // 时间轴选区
   const isSelecting = ref(false)
@@ -360,6 +361,7 @@ export function useStitching(props, emit) {
       name: rawClip?.name || rawClip?.filename || '',
       filename: rawClip?.filename || rawClip?.name || '',
       source: rawClip?.source || trackType,
+      __canvasDragSessionId: activeCanvasDragSessionId,
     }
 
     return { payload, rawClip }
@@ -367,6 +369,9 @@ export function useStitching(props, emit) {
 
   // trackType: 'buffer' | 'video' | 'audio'
   function handleDragStart(trackType, index, e) {
+    if (!activeCanvasDragSessionId) {
+      activeCanvasDragSessionId = `stitch-drag-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    }
     const dragSource = { track: trackType, index }
     draggedClip.value = dragSource
     window.__stitchingDragClip = dragSource
@@ -406,6 +411,8 @@ export function useStitching(props, emit) {
 
   function handlePointerDragStart(trackType, index, e) {
     if (e?.button !== 0) return
+    const dragSessionId = `stitch-drag-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    activeCanvasDragSessionId = dragSessionId
     const dragSource = { track: trackType, index }
     const startX = e.clientX
     const startY = e.clientY
@@ -420,6 +427,9 @@ export function useStitching(props, emit) {
       window.setTimeout(() => {
         if (window.__stitchingDragClip === dragSource) {
           window.__stitchingDragClip = null
+        }
+        if (activeCanvasDragSessionId === dragSessionId) {
+          activeCanvasDragSessionId = null
         }
       }, 100)
     }
@@ -565,11 +575,15 @@ export function useStitching(props, emit) {
   }
 
   function handleDragEnd() {
+    const dragSessionId = activeCanvasDragSessionId
     window.setTimeout(() => {
       if (window.__stitchingDragClip === draggedClip.value) {
         window.__stitchingDragClip = null
       }
       draggedClip.value = null
+      if (activeCanvasDragSessionId === dragSessionId) {
+        activeCanvasDragSessionId = null
+      }
     }, 100)
     draggedOver.value = null
     isDraggingOverContainer.value = null

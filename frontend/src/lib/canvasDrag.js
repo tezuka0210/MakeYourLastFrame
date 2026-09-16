@@ -91,7 +91,7 @@ export function initCanvasDrag() {
 
   let regionDragAttachedImages = [];
   let regionDragMaskState = null;
-  let regionOverlapFeedbackEl = null;
+  let regionOverlapFeedbackEls = [];
   let regionAlignmentGuideX = null;
   let regionAlignmentGuideY = null;
 
@@ -130,9 +130,25 @@ export function initCanvasDrag() {
   const BRUSH_SIZE_STEP = 2;
   let brushSize = 10;
 
-  let regionColor = '#4b5563';
+  const FRAME_COLOR_PALETTE = [
+    '#ffd166',
+    '#72d6a0',
+    '#ff9f68',
+    '#75b9ff',
+    '#ff82a9',
+    '#b69cff',
+    '#62d8d2',
+    '#e77ac8'
+  ];
+  let regionColor = FRAME_COLOR_PALETTE[0];
   let paintColor = '#5f96db';
   let activeColorPicker = null;  
+
+  function getNextFrameColor() {
+    const usedColors = new Set(subCanvases.map(region => normalizeHexColor(region.color)));
+    return FRAME_COLOR_PALETTE.find(color => !usedColors.has(normalizeHexColor(color)))
+      || FRAME_COLOR_PALETTE[subCanvases.length % FRAME_COLOR_PALETTE.length];
+  }
 
   const DELETE_HANDLE_DELAY = 1500;
   const DELETE_HANDLE_HIDE_DELAY = 180;
@@ -162,6 +178,8 @@ export function initCanvasDrag() {
   let lastDragData = null;
   let boardDragDepth = 0;
   let lastExternalCanvasDrop = null;
+  const processedCanvasDragSessions = new Map();
+  const CANVAS_DRAG_SESSION_TTL = 10000;
 
   function setBoardDragVisual(active) {
     // 你现在不想要蓝色背景，所以这里直接禁用 dragover 视觉
@@ -604,6 +622,7 @@ export function initCanvasDrag() {
 
     droppedImages.forEach(updateDeleteHandlePosition);
     subCanvases.forEach(updateDeleteHandlePosition);
+    refreshAllItemFrameBorders();
   }
 
   function zoomBoardAt(clientX, clientY, factor) {
@@ -763,8 +782,17 @@ export function initCanvasDrag() {
   function applyItemVisualLayer(item) {
     if (!item) return;
     item.element.style.zIndex = String(item.zIndex * 2);
+    if (item.activeFrameOverlayEl) {
+      item.activeFrameOverlayEl.style.zIndex = String(item.zIndex * 2 + 1);
+    }
+    if (item.frameMembershipEl) {
+      item.frameMembershipEl.style.zIndex = String(item.zIndex * 2 + 2);
+    }
+    if (item.activeFrameOutlineEl) {
+      item.activeFrameOutlineEl.style.zIndex = String(item.zIndex * 2 + 3);
+    }
     if (item.labelEl) {
-      item.labelEl.style.zIndex = String(item.zIndex * 2 + 1);
+      item.labelEl.style.zIndex = String(item.zIndex * 2 + 4);
     }
   }
 
@@ -787,6 +815,7 @@ export function initCanvasDrag() {
     regionItem.element.style.top = `${y}px`;
 
     updateDeleteHandlePosition(regionItem);
+    refreshAllItemFrameBorders();
   }
 
   function setImagePosition(img, x, y) {
@@ -835,6 +864,7 @@ export function initCanvasDrag() {
 
     updateLabelPosition(item);
     updateDeleteHandlePosition(item);
+    refreshItemFrameBorder(item);
   }
 
   function setSceneItemPosition(item, x, y) {
@@ -858,19 +888,376 @@ export function initCanvasDrag() {
     const selected = currentSelectedItem === item;
 
     // 选中态与编组一致：浅灰底 + 细边，不用深色粗描边
-    item.element.style.outline = highlighted
-      ? '2px solid #6b7280'
-      : (selected ? '1.5px solid #6b7280' : 'none');
-    item.element.style.outlineOffset = highlighted ? '3px' : '0';
-    item.element.style.backgroundColor = (highlighted || selected)
-      ? 'rgba(17,24,39,0.05)'
-      : 'transparent';
-    item.element.style.filter = 'none';
+    item.element.style.outline = 'none';
+    item.element.style.outlineOffset = '0';
+    item.element.style.backgroundColor = 'transparent';
 
     if (item.labelEl) {
       item.labelEl.style.background = (highlighted || selected) ? '#4b5563' : '#8b929e';
       item.labelEl.style.boxShadow = 'none';
     }
+  }
+
+  function ensureItemFrameMembership(item) {
+    if (!item || item.frameMembershipEl) return item?.frameMembershipEl || null;
+
+    const outline = document.createElement('canvas');
+    outline.dataset.frameMembership = item.id;
+    outline.setAttribute('aria-hidden', 'true');
+    outline.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      display:none;
+      overflow:visible;
+      pointer-events:none;
+      transform-origin:top left;
+      filter:drop-shadow(0 1px 1px rgba(255,255,255,0.72));
+    `;
+    drawingScene.appendChild(outline);
+    item.frameMembershipEl = outline;
+    applyItemVisualLayer(item);
+    return outline;
+  }
+
+  function ensureActiveFrameOutline(item) {
+    if (!item || item.activeFrameOutlineEl) return item?.activeFrameOutlineEl || null;
+
+    const outline = document.createElement('canvas');
+    outline.dataset.activeFrameOutline = item.id;
+    outline.setAttribute('aria-hidden', 'true');
+    outline.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      display:none;
+      overflow:visible;
+      pointer-events:none;
+      transform-origin:top left;
+      filter:drop-shadow(0 1px 1px rgba(255,255,255,0.72));
+    `;
+    drawingScene.appendChild(outline);
+    item.activeFrameOutlineEl = outline;
+    applyItemVisualLayer(item);
+    return outline;
+  }
+
+  function ensureActiveFrameOverlay(item) {
+    if (!item || item.activeFrameOverlayEl) return item?.activeFrameOverlayEl || null;
+
+    let overlay;
+    if (item.kind === 'mask') {
+      overlay = document.createElement('canvas');
+      const source = item.sourceCanvas || item.element;
+      overlay.width = source.width;
+      overlay.height = source.height;
+      overlay.getContext('2d').drawImage(source, 0, 0);
+    } else {
+      overlay = item.element.cloneNode(false);
+      overlay.removeAttribute('id');
+      overlay.draggable = false;
+    }
+
+    overlay.dataset.activeFrameOverlay = item.id;
+    overlay.style.cssText = `
+      position:absolute;
+      left:0;
+      top:0;
+      display:none;
+      border:none;
+      outline:none;
+      border-radius:4px;
+      object-fit:contain;
+      pointer-events:none;
+      user-select:none;
+      transform-origin:top left;
+      background:transparent;
+    `;
+    drawingScene.appendChild(overlay);
+    item.activeFrameOverlayEl = overlay;
+    applyItemVisualLayer(item);
+    return overlay;
+  }
+
+  function refreshItemActiveFrameClip(item) {
+    if (!item?.element) return;
+
+    const overlay = ensureActiveFrameOverlay(item);
+    const activeRegion = subCanvases.find(region => region.id === activeRegionId) || null;
+    if (!overlay || !activeRegion) {
+      item.element.style.filter = 'none';
+      item.element.style.opacity = '1';
+      if (overlay) overlay.style.display = 'none';
+      return;
+    }
+
+    const pos = getImagePosition(item.element);
+    const { w, h } = getItemSize(item);
+    if (!(w > 0) || !(h > 0)) return;
+
+    item.element.style.filter = 'none';
+    item.element.style.opacity = '0.28';
+
+    const left = Math.max(pos.x, activeRegion.x);
+    const top = Math.max(pos.y, activeRegion.y);
+    const right = Math.min(pos.x + w, activeRegion.x + activeRegion.w);
+    const bottom = Math.min(pos.y + h, activeRegion.y + activeRegion.h);
+    const hasVisibleIntersection = right > left && bottom > top && isItemVisibleInRegion(item, activeRegion);
+
+    if (!hasVisibleIntersection) {
+      overlay.style.display = 'none';
+      return;
+    }
+
+    let localLeft = ((left - pos.x) / w) * 100;
+    let localRight = ((right - pos.x) / w) * 100;
+    let localTop = ((top - pos.y) / h) * 100;
+    let localBottom = ((bottom - pos.y) / h) * 100;
+
+    if (item.flipX) [localLeft, localRight] = [100 - localRight, 100 - localLeft];
+    if (item.flipY) [localTop, localBottom] = [100 - localBottom, 100 - localTop];
+
+    const tx = item.flipX ? pos.x + w : pos.x;
+    const ty = item.flipY ? pos.y + h : pos.y;
+    overlay.style.display = 'block';
+    overlay.style.width = `${w}px`;
+    overlay.style.height = `${h}px`;
+    overlay.style.opacity = '1';
+    overlay.style.clipPath = `inset(${localTop}% ${100 - localRight}% ${100 - localBottom}% ${localLeft}%)`;
+    overlay.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${item.flipX ? -1 : 1}, ${item.flipY ? -1 : 1})`;
+  }
+
+  function sourceHasTransparency(item, source) {
+    const cacheKey = `${source.width}x${source.height}`;
+    if (item._outlineTransparencyKey === cacheKey) return item._outlineHasTransparency;
+
+    try {
+      const ctx = source.getContext('2d', { willReadFrequently: true });
+      const data = ctx.getImageData(0, 0, source.width, source.height).data;
+      const stride = Math.max(1, Math.floor(Math.max(source.width, source.height) / 96));
+      let transparent = false;
+      for (let y = 0; y < source.height && !transparent; y += stride) {
+        for (let x = 0; x < source.width; x += stride) {
+          if (data[(y * source.width + x) * 4 + 3] < 245) {
+            transparent = true;
+            break;
+          }
+        }
+      }
+      item._outlineTransparencyKey = cacheKey;
+      item._outlineHasTransparency = transparent;
+      return transparent;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function createDilatedMask(source, padding, radius) {
+    const mask = document.createElement('canvas');
+    mask.width = source.width + padding * 2;
+    mask.height = source.height + padding * 2;
+    const ctx = mask.getContext('2d');
+    ctx.drawImage(source, padding, padding);
+
+    if (radius <= 0) return mask;
+
+    const steps = Math.min(96, Math.max(20, Math.ceil(radius * 3)));
+
+    for (let i = 0; i < steps; i += 1) {
+      const angle = (i / steps) * Math.PI * 2;
+      ctx.drawImage(
+        source,
+        padding + Math.cos(angle) * radius,
+        padding + Math.sin(angle) * radius
+      );
+    }
+
+    return mask;
+  }
+
+  function createOutlineRingMask(source, padding, innerRadius, outerRadius) {
+    const outer = createDilatedMask(source, padding, outerRadius);
+    const inner = createDilatedMask(source, padding, innerRadius);
+    const ctx = outer.getContext('2d');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.drawImage(inner, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    return outer;
+  }
+
+  function colorWithAlpha(color, alpha) {
+    const { r, g, b } = hexToRgb(color);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function drawColoredMask(ctx, mask, color) {
+    const layer = document.createElement('canvas');
+    layer.width = ctx.canvas.width;
+    layer.height = ctx.canvas.height;
+    const layerCtx = layer.getContext('2d');
+    layerCtx.fillStyle = color;
+    layerCtx.fillRect(0, 0, layer.width, layer.height);
+    layerCtx.globalCompositeOperation = 'destination-in';
+    layerCtx.drawImage(mask, 0, 0);
+    ctx.drawImage(layer, 0, 0);
+  }
+
+  function refreshActiveFrameOutlineClip(item, outline, signature, bounds, activeIndex) {
+    const activeOutline = ensureActiveFrameOutline(item);
+    const activeRegion = subCanvases.find(region => region.id === activeRegionId) || null;
+
+    if (!activeOutline || !activeRegion) {
+      outline.style.opacity = currentSelectedItem === item ? '1' : '0.86';
+      if (activeOutline) activeOutline.style.display = 'none';
+      return;
+    }
+
+    outline.style.opacity = '0.24';
+    if (activeIndex < 0 || !isItemVisibleInRegion(item, activeRegion)) {
+      activeOutline.style.display = 'none';
+      return;
+    }
+
+    if (
+      activeOutline.width !== outline.width ||
+      activeOutline.height !== outline.height ||
+      item._activeOutlineCopySignature !== signature
+    ) {
+      activeOutline.width = outline.width;
+      activeOutline.height = outline.height;
+      const activeCtx = activeOutline.getContext('2d');
+      activeCtx.clearRect(0, 0, activeOutline.width, activeOutline.height);
+      activeCtx.drawImage(outline, 0, 0);
+      item._activeOutlineCopySignature = signature;
+    }
+
+    const left = Math.max(bounds.x, activeRegion.x);
+    const top = Math.max(bounds.y, activeRegion.y);
+    const right = Math.min(bounds.x + bounds.w, activeRegion.x + activeRegion.w);
+    const bottom = Math.min(bounds.y + bounds.h, activeRegion.y + activeRegion.h);
+    if (right <= left || bottom <= top) {
+      activeOutline.style.display = 'none';
+      return;
+    }
+
+    let localLeft = ((left - bounds.x) / bounds.w) * 100;
+    let localRight = ((right - bounds.x) / bounds.w) * 100;
+    let localTop = ((top - bounds.y) / bounds.h) * 100;
+    let localBottom = ((bottom - bounds.y) / bounds.h) * 100;
+    if (item.flipX) [localLeft, localRight] = [100 - localRight, 100 - localLeft];
+    if (item.flipY) [localTop, localBottom] = [100 - localBottom, 100 - localTop];
+
+    activeOutline.style.display = 'block';
+    activeOutline.style.width = `${bounds.w}px`;
+    activeOutline.style.height = `${bounds.h}px`;
+    activeOutline.style.opacity = '1';
+    activeOutline.style.clipPath = `inset(${localTop}% ${100 - localRight}% ${100 - localBottom}% ${localLeft}%)`;
+    activeOutline.style.transform = `translate3d(${bounds.tx}px, ${bounds.ty}px, 0) scale(${item.flipX ? -1 : 1}, ${item.flipY ? -1 : 1})`;
+  }
+
+  function refreshItemFrameBorder(item) {
+    if (!item?.element || !droppedImages.includes(item)) return;
+
+    refreshItemActiveFrameClip(item);
+
+    const enabledRegions = getContainingRegionsForItem(item)
+      .filter(region => isItemVisibleInRegion(item, region));
+    const outline = ensureItemFrameMembership(item);
+
+    if (!outline || enabledRegions.length === 0) {
+      if (outline) outline.style.display = 'none';
+      if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.style.display = 'none';
+      return;
+    }
+
+    if (!item._hitReady || !item._hitCanvas) {
+      outline.style.display = 'none';
+      if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.style.display = 'none';
+      ensureHitCanvas(item);
+      return;
+    }
+
+    const source = item._hitCanvas;
+    if (!sourceHasTransparency(item, source)) {
+      outline.style.display = 'none';
+      if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.style.display = 'none';
+      return;
+    }
+
+    const pos = getImagePosition(item.element);
+    const { w, h } = getItemSize(item);
+    if (!(w > 0) || !(h > 0)) return;
+
+    const sourceScale = Math.max(0.01, Math.min(source.width / w, source.height / h));
+    const ringWidth = Math.max(1, Math.min(22, Math.round((5 / camera.scale) * sourceScale)));
+    const ringGap = Math.max(1, Math.min(8, Math.round((1 / camera.scale) * sourceScale)));
+    const activeIndex = enabledRegions.findIndex(region => region.id === activeRegionId);
+
+    if (activeRegionId && activeIndex < 0) {
+      outline.style.display = 'none';
+      if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.style.display = 'none';
+      return;
+    }
+
+    const displayedRegions = activeIndex >= 0
+      ? [enabledRegions[activeIndex]]
+      : enabledRegions;
+    const outerRadius = displayedRegions.length * ringWidth
+      + Math.max(0, displayedRegions.length - 1) * ringGap;
+    const padding = Math.min(96, outerRadius) + 2;
+    const paddingScene = padding / sourceScale;
+    const colorsKey = displayedRegions.map(region => `${region.id}:${region.color}`).join('|');
+    const signature = `${source.width}x${source.height}:${ringWidth}:${ringGap}:${activeIndex}:${colorsKey}`;
+
+    if (outline.width !== source.width + padding * 2) outline.width = source.width + padding * 2;
+    if (outline.height !== source.height + padding * 2) outline.height = source.height + padding * 2;
+    const ctx = outline.getContext('2d');
+
+    if (item._outlineRenderSignature !== signature) {
+      ctx.clearRect(0, 0, outline.width, outline.height);
+      displayedRegions.forEach((region, index) => {
+        const innerRadius = index * (ringWidth + ringGap);
+        const ringOuterRadius = Math.min(96, innerRadius + ringWidth);
+        if (ringOuterRadius <= innerRadius) return;
+
+        const alpha = activeIndex >= 0 ? 1 : 0.9;
+        const ringMask = createOutlineRingMask(
+          source,
+          padding,
+          innerRadius,
+          ringOuterRadius
+        );
+        drawColoredMask(
+          ctx,
+          ringMask,
+          colorWithAlpha(normalizeHexColor(region.color || regionColor), alpha)
+        );
+      });
+      item._outlineRenderSignature = signature;
+    }
+
+    const overlayW = w + paddingScene * 2;
+    const overlayH = h + paddingScene * 2;
+    const overlayX = pos.x - paddingScene;
+    const overlayY = pos.y - paddingScene;
+    const tx = item.flipX ? overlayX + overlayW : overlayX;
+    const ty = item.flipY ? overlayY + overlayH : overlayY;
+
+    outline.style.display = 'block';
+    outline.style.width = `${overlayW}px`;
+    outline.style.height = `${overlayH}px`;
+    outline.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${item.flipX ? -1 : 1}, ${item.flipY ? -1 : 1})`;
+    refreshActiveFrameOutlineClip(
+      item,
+      outline,
+      signature,
+      { x: overlayX, y: overlayY, w: overlayW, h: overlayH, tx, ty },
+      activeIndex
+    );
+  }
+
+  function refreshAllItemFrameBorders() {
+    droppedImages.forEach(refreshItemFrameBorder);
   }
 
   function refreshAllItemEmphasis() {
@@ -900,11 +1287,13 @@ export function initCanvasDrag() {
   function selectItem(item) {
     currentSelectedItem = item;
     refreshAllItemEmphasis();
+    refreshAllItemFrameBorders();
   }
 
   function clearSelection() {
     currentSelectedItem = null;
     refreshAllItemEmphasis();
+    refreshAllItemFrameBorders();
   }
 
   function updateLabelPosition(item) {
@@ -1042,26 +1431,42 @@ export function initCanvasDrag() {
   }
 
 
-  function applyRegionStyle(el, { temp = false } = {}) {
+  function applyRegionStyle(el, { temp = false, color = regionColor, state = 'normal' } = {}) {
     if (!el) return;
 
-    const borderColor = normalizeHexColor(regionColor);
+    const borderColor = normalizeHexColor(color);
+    const { r, g, b } = hexToRgb(borderColor);
     const borderStyle = temp ? 'dashed' : 'solid';
+    const borderAlpha = temp ? 0.9 : (state === 'active' ? 1 : (state === 'muted' ? 0.2 : 0.58));
+    const fillAlpha = temp ? 0.08 : (state === 'active' ? 0.055 : (state === 'muted' ? 0.006 : 0.018));
+    const borderWidth = temp ? 2.5 : (state === 'active' ? 4 : 3);
 
-    el.style.border = `1px ${borderStyle} ${borderColor}`;
-    el.style.background = temp ? 'rgba(255,255,255,0.12)' : 'transparent';
+    el.style.border = `${borderWidth}px ${borderStyle} rgba(${r},${g},${b},${borderAlpha})`;
+    el.style.background = `rgba(${r},${g},${b},${fillAlpha})`;
     el.style.boxShadow = temp
       ? 'inset 0 0 0 1px rgba(255,255,255,0.18)'
       : 'none';
   }
 
   function refreshRegionStyles() {
+    const hasActiveRegion = subCanvases.some(region => region.id === activeRegionId);
     subCanvases.forEach(region => {
+      const state = !hasActiveRegion
+        ? 'normal'
+        : (region.id === activeRegionId ? 'active' : 'muted');
       if (region?.frameEl) {
-        applyRegionStyle(region.frameEl, { temp: false });
+        applyRegionStyle(region.frameEl, {
+          temp: false,
+          color: region.color || regionColor,
+          state
+        });
       }
       if (region?.gripVisualEl) {
-        region.gripVisualEl.style.background = normalizeHexColor(regionColor);
+        region.gripVisualEl.style.background = normalizeHexColor(region.color || regionColor);
+        region.gripVisualEl.style.opacity = state === 'active' ? '0.9' : (state === 'muted' ? '0.16' : '0.38');
+      }
+      if (region?.nameLabelEl) {
+        region.nameLabelEl.style.background = normalizeHexColor(region.color || regionColor);
       }
     });
 
@@ -1070,6 +1475,14 @@ export function initCanvasDrag() {
     }
 
     updateToolbarColorIndicators();
+    refreshAllItemFrameBorders();
+    refreshAllItemEmphasis();
+  }
+
+  function setActiveRegion(region) {
+    activeRegionId = region?.id || null;
+    if (region?.color) regionColor = region.color;
+    refreshRegionStyles();
   }
 
   function destroyActiveColorPicker() {
@@ -1463,6 +1876,8 @@ export function initCanvasDrag() {
 
     if (kind === 'region') {
       regionColor = normalized;
+      const activeRegion = subCanvases.find(region => region.id === activeRegionId);
+      if (activeRegion) activeRegion.color = normalized;
       refreshRegionStyles();
     } else {
       paintColor = normalized;
@@ -1724,6 +2139,9 @@ export function initCanvasDrag() {
 
     if (item.deleteBtn) item.deleteBtn.remove();
     if (item.labelEl) item.labelEl.remove();
+    if (item.activeFrameOverlayEl) item.activeFrameOverlayEl.remove();
+    if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.remove();
+    if (item.frameMembershipEl) item.frameMembershipEl.remove();
     if (item.element) item.element.remove();
 
     droppedImages = droppedImages.filter(it => it !== item);
@@ -1746,9 +2164,12 @@ export function initCanvasDrag() {
     if (regionItem.element) regionItem.element.remove();
 
     subCanvases = subCanvases.filter(it => it !== regionItem);
+    droppedImages.forEach(item => item.hiddenRegionIds?.delete(regionItem.id));
 
     if (activeRegionId === regionItem.id) {
-      activeRegionId = null;
+      setActiveRegion(null);
+    } else {
+      refreshRegionStyles();
     }
   }
 
@@ -2366,8 +2787,15 @@ export function initCanvasDrag() {
 
     // mask 类型本身就是画布，直接用
     if (item.kind === 'mask' && item.sourceCanvas) {
-      item._hitCanvas = item.sourceCanvas;
-      item._hitCtx = item.sourceCanvas.getContext('2d', { willReadFrequently: true });
+      const source = item.sourceCanvas;
+      const k = Math.min(1, HIT_SAMPLE_MAX / Math.max(source.width, source.height));
+      const sampled = document.createElement('canvas');
+      sampled.width = Math.max(1, Math.round(source.width * k));
+      sampled.height = Math.max(1, Math.round(source.height * k));
+      const sampledCtx = sampled.getContext('2d', { willReadFrequently: true });
+      sampledCtx.drawImage(source, 0, 0, sampled.width, sampled.height);
+      item._hitCanvas = sampled;
+      item._hitCtx = sampledCtx;
       item._hitReady = true;
       return;
     }
@@ -2392,6 +2820,7 @@ export function initCanvasDrag() {
         item._hitCanvas = c;
         item._hitCtx = ctx;
         item._hitReady = true;
+        refreshItemFrameBorder(item);
       })
       .catch(() => {
         // 取不到像素（跨域等）时保持旧行为：整块矩形都可拖
@@ -2498,6 +2927,7 @@ export function initCanvasDrag() {
   function createRegionBox(l, t, w, h) {
     const region = document.createElement('div');
     const id = `region_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const frameColor = getNextFrameColor();
 
     region.dataset.regionId = id;
     region.style.cssText = `
@@ -2516,7 +2946,7 @@ export function initCanvasDrag() {
       inset:0;
       pointer-events:none;
     `;
-    applyRegionStyle(frameEl, { temp: false });
+    applyRegionStyle(frameEl, { temp: false, color: frameColor });
 
     const gripEl = document.createElement('div');
     gripEl.style.cssText = `
@@ -2538,7 +2968,7 @@ export function initCanvasDrag() {
       width:34px;
       height:4px;
       border-radius:999px;
-      background:${normalizeHexColor(regionColor)};
+      background:${frameColor};
       opacity:0.28;
       pointer-events:none;
     `;
@@ -2551,14 +2981,17 @@ export function initCanvasDrag() {
     const item = {
       kind: 'region',
       id,
+      name: '',
       element: region,
       frameEl,
       gripEl,
       gripVisualEl,
+      nameLabelEl: null,
       x: l,
       y: t,
       w,
       h,
+      color: frameColor,
       deleteBtn: null,
       deleteHovering: false,
       showDeleteTimer: null,
@@ -2568,7 +3001,7 @@ export function initCanvasDrag() {
     };
 
     subCanvases.push(item);
-    activeRegionId = id;
+    setActiveRegion(item);
 
     gripEl.addEventListener('mousedown', (ev) => {
       if (paintMode || drawSubCanvasMode) return;
@@ -2577,7 +3010,7 @@ export function initCanvasDrag() {
       ev.preventDefault();
       ev.stopPropagation();
 
-      activeRegionId = id;
+      setActiveRegion(item);
       hideDeleteHandle(item, true);
 
       regionDragCandidate = {
@@ -2597,7 +3030,52 @@ export function initCanvasDrag() {
 
     gripEl.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      activeRegionId = id;
+      setActiveRegion(item);
+    });
+
+    gripEl.addEventListener('dblclick', (ev) => {
+      if (paintMode || drawSubCanvasMode) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      setActiveRegion(item);
+
+      const nextName = window.prompt('Frame name', item.name || '');
+      if (nextName === null) return;
+
+      item.name = nextName.trim();
+      if (!item.name) {
+        item.nameLabelEl?.remove();
+        item.nameLabelEl = null;
+        return;
+      }
+
+      if (!item.nameLabelEl) {
+        const nameLabel = document.createElement('div');
+        nameLabel.style.cssText = `
+          position:absolute;
+          left:0;
+          top:0;
+          max-width:calc(100% - 12px);
+          padding:3px 8px;
+          border-radius:0 0 5px 0;
+          color:#ffffff;
+          font-size:11px;
+          font-weight:700;
+          line-height:16px;
+          letter-spacing:0;
+          white-space:nowrap;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          pointer-events:none;
+          z-index:2;
+          box-shadow:0 1px 4px rgba(15,23,42,0.16);
+        `;
+        region.appendChild(nameLabel);
+        item.nameLabelEl = nameLabel;
+      }
+
+      item.nameLabelEl.textContent = item.name;
+      item.nameLabelEl.style.background = normalizeHexColor(item.color || regionColor);
     });
 
     // 取景框拖拽条上的右键菜单（附加功能，与素材图层菜单同一套模式）
@@ -2605,7 +3083,7 @@ export function initCanvasDrag() {
       if (paintMode || drawSubCanvasMode) return;
       ev.preventDefault();
       ev.stopPropagation();
-      activeRegionId = id;
+      setActiveRegion(item);
       createRegionMenu();
       showRegionMenu(ev.clientX, ev.clientY, item);
     });
@@ -2639,11 +3117,10 @@ export function initCanvasDrag() {
     item.element.style.width = `${w}px`;
     item.element.style.height = `${h}px`;
     updateDeleteHandlePosition(item);
+    refreshAllItemFrameBorders();
   }
 
-  function ensureRegionOverlapFeedback() {
-    if (regionOverlapFeedbackEl) return regionOverlapFeedbackEl;
-
+  function createRegionOverlapFeedback() {
     const overlay = document.createElement('div');
     overlay.style.cssText = `
       position:absolute;
@@ -2662,7 +3139,6 @@ export function initCanvasDrag() {
       transform:translate(-50%,-50%);
       padding:3px 7px;
       border-radius:999px;
-      background:rgba(55,65,81,0.92);
       color:#ffffff;
       font-size:11px;
       font-weight:700;
@@ -2672,12 +3148,20 @@ export function initCanvasDrag() {
     `;
     overlay.appendChild(label);
     drawingScene.appendChild(overlay);
-    regionOverlapFeedbackEl = overlay;
     return overlay;
   }
 
+  function ensureRegionOverlapFeedbackCount(count) {
+    while (regionOverlapFeedbackEls.length < count) {
+      regionOverlapFeedbackEls.push(createRegionOverlapFeedback());
+    }
+    return regionOverlapFeedbackEls;
+  }
+
   function hideRegionOverlapFeedback() {
-    if (regionOverlapFeedbackEl) regionOverlapFeedbackEl.style.display = 'none';
+    regionOverlapFeedbackEls.forEach(overlay => {
+      overlay.style.display = 'none';
+    });
   }
 
   function ensureRegionAlignmentGuides() {
@@ -2767,8 +3251,8 @@ export function initCanvasDrag() {
       return;
     }
 
-    let best = null;
-    subCanvases.forEach(other => {
+    const overlaps = [];
+    subCanvases.forEach((other, frameIndex) => {
       if (other === item) return;
 
       const left = Math.max(item.x, other.x);
@@ -2780,22 +3264,46 @@ export function initCanvasDrag() {
       if (w <= 0 || h <= 0) return;
 
       const area = w * h;
-      if (!best || area > best.area) best = { left, top, w, h, area };
+      overlaps.push({ other, frameIndex, left, top, w, h, area });
     });
 
-    if (!best) {
+    if (overlaps.length === 0) {
       hideRegionOverlapFeedback();
       return;
     }
 
-    const overlay = ensureRegionOverlapFeedback();
-    const percentage = Math.min(100, (best.area / (item.w * item.h)) * 100);
-    overlay.style.display = 'block';
-    overlay.style.left = `${best.left}px`;
-    overlay.style.top = `${best.top}px`;
-    overlay.style.width = `${best.w}px`;
-    overlay.style.height = `${best.h}px`;
-    overlay.firstElementChild.textContent = `${percentage.toFixed(1)}% overlap`;
+    const centerGroups = new Map();
+    overlaps.forEach(overlap => {
+      const centerKey = `${Math.round(overlap.left + overlap.w / 2)}:${Math.round(overlap.top + overlap.h / 2)}`;
+      const group = centerGroups.get(centerKey) || [];
+      group.push(overlap);
+      centerGroups.set(centerKey, group);
+    });
+
+    const overlays = ensureRegionOverlapFeedbackCount(overlaps.length);
+    overlaps.forEach((overlap, index) => {
+      const overlay = overlays[index];
+      const label = overlay.firstElementChild;
+      const percentage = Math.min(100, (overlap.area / (item.w * item.h)) * 100);
+      const centerKey = `${Math.round(overlap.left + overlap.w / 2)}:${Math.round(overlap.top + overlap.h / 2)}`;
+      const centerGroup = centerGroups.get(centerKey);
+      const stackIndex = centerGroup.indexOf(overlap);
+      const stackOffset = (stackIndex - (centerGroup.length - 1) / 2) * 24;
+
+      overlay.style.display = 'block';
+      overlay.style.left = `${overlap.left}px`;
+      overlay.style.top = `${overlap.top}px`;
+      overlay.style.width = `${overlap.w}px`;
+      overlay.style.height = `${overlap.h}px`;
+      label.textContent = `${percentage.toFixed(1)}% overlap`;
+      label.title = overlap.other.name || `Frame ${overlap.frameIndex + 1}`;
+      label.style.background = normalizeHexColor(overlap.other.color || regionColor);
+      label.style.transform = `translate(-50%, calc(-50% + ${stackOffset}px))`;
+    });
+
+    regionOverlapFeedbackEls.slice(overlaps.length).forEach(overlay => {
+      overlay.style.display = 'none';
+    });
   }
 
   // 按给定方向复制一个同尺寸同比例的取景框，overlap 为与原框的重叠比例（0~0.9）。
@@ -2816,7 +3324,6 @@ export function initCanvasDrag() {
     else if (direction === 'up') ny = item.y - stepY;
 
     const created = createRegionBox(nx, ny, item.w, item.h);
-    activeRegionId = created?.id ?? activeRegionId;
     return created;
   }
 
@@ -2950,7 +3457,90 @@ export function initCanvasDrag() {
 
     layerMenuTarget = item;
     selectItem(item);
+    refreshLayerMenuFrameVisibility(item);
     positionStyledMenu(layerMenu, x, y);
+  }
+
+  function refreshLayerMenuFrameVisibility(item) {
+    if (!layerMenu || !item) return;
+
+    layerMenu.querySelector('[data-frame-visibility-section]')?.remove();
+
+    const section = document.createElement('div');
+    section.dataset.frameVisibilitySection = '1';
+    section.style.cssText = 'border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;margin:4px 6px;padding:5px 0;';
+
+    const title = document.createElement('div');
+    title.textContent = 'Visible in Frames';
+    title.style.cssText = 'padding:4px 4px 5px;font-size:11px;font-weight:700;color:#6b7280;';
+    section.appendChild(title);
+
+    const containingRegions = getContainingRegionsForItem(item);
+    if (containingRegions.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = 'No containing frames';
+      empty.style.cssText = 'padding:6px 4px;font-size:12px;color:#9ca3af;';
+      section.appendChild(empty);
+    } else {
+      containingRegions.forEach(region => {
+        const frameIndex = subCanvases.indexOf(region) + 1;
+        const enabled = !item.hiddenRegionIds?.has(region.id);
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.dataset.regionId = region.id;
+        row.style.cssText = `
+          width:100%;display:flex;align-items:center;gap:8px;border:none;background:transparent;
+          text-align:left;padding:6px 4px;border-radius:6px;cursor:pointer;font-size:12px;color:#111827;
+        `;
+
+        const swatch = document.createElement('span');
+        swatch.style.cssText = `
+          width:10px;height:10px;flex:0 0 10px;border-radius:2px;
+          background:${normalizeHexColor(region.color || regionColor)};
+        `;
+
+        const label = document.createElement('span');
+        label.textContent = region.name || `Frame ${frameIndex}`;
+        label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+        const check = document.createElement('span');
+        check.textContent = enabled ? '\u2713' : '';
+        check.style.cssText = `
+          width:16px;height:16px;display:grid;place-items:center;flex:0 0 16px;
+          border:1px solid ${enabled ? '#4b5563' : '#d1d5db'};border-radius:3px;
+          background:${enabled ? '#4b5563' : '#ffffff'};color:#ffffff;font-size:11px;
+        `;
+
+        row.append(swatch, label, check);
+        row.onmouseenter = () => { row.style.background = '#f3f4f6'; };
+        row.onmouseleave = () => { row.style.background = 'transparent'; };
+        section.appendChild(row);
+      });
+    }
+
+    section.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = event.target?.closest?.('[data-region-id]');
+      if (!row || !layerMenuTarget) return;
+
+      if (!(layerMenuTarget.hiddenRegionIds instanceof Set)) {
+        layerMenuTarget.hiddenRegionIds = new Set(layerMenuTarget.hiddenRegionIds || []);
+      }
+
+      const regionId = row.dataset.regionId;
+      if (layerMenuTarget.hiddenRegionIds.has(regionId)) {
+        layerMenuTarget.hiddenRegionIds.delete(regionId);
+      } else {
+        layerMenuTarget.hiddenRegionIds.add(regionId);
+      }
+
+      refreshItemFrameBorder(layerMenuTarget);
+      refreshLayerMenuFrameVisibility(layerMenuTarget);
+    });
+
+    const groupSeparator = layerMenu.querySelector('[data-action="group-selected"]')?.previousElementSibling;
+    layerMenu.insertBefore(section, groupSeparator || layerMenu.lastElementChild);
   }
 
   function hideLayerMenu() {
@@ -3232,6 +3822,32 @@ export function initCanvasDrag() {
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
 
+  function isItemContainedByRegion(item, region) {
+    if (!item || !region) return false;
+
+    const imageRect = getImageSceneRect(item);
+    const regionRect = getRegionSceneRect(region);
+    const overlapArea = rectIntersectionArea(imageRect, regionRect);
+    const imageArea = Math.max(1, imageRect.width * imageRect.height);
+    const centerX = imageRect.left + imageRect.width / 2;
+    const centerY = imageRect.top + imageRect.height / 2;
+
+    return (
+      pointInRect(centerX, centerY, regionRect) ||
+      overlapArea / imageArea >= 0.08 ||
+      overlapArea >= 24 * 24
+    );
+  }
+
+  function getContainingRegionsForItem(item) {
+    return subCanvases.filter(region => isItemContainedByRegion(item, region));
+  }
+
+  function isItemVisibleInRegion(item, region) {
+    if (!region) return true;
+    return !item.hiddenRegionIds?.has(region.id);
+  }
+
   function collectImagesInsideRegion(region) {
     const regionRect = getRegionSceneRect(region);
 
@@ -3425,7 +4041,7 @@ export function initCanvasDrag() {
 
     if (type === 'origin') {
       ctx.clearRect(0, 0, clip.w, clip.h);
-      const sortedItems = getSortedItems();
+      const sortedItems = getSortedItems().filter(item => isItemVisibleInRegion(item, region));
 
       await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
         includeMask: false
@@ -3441,7 +4057,7 @@ export function initCanvasDrag() {
 
     if (type === 'combined') {
       ctx.clearRect(0, 0, clip.w, clip.h);
-      const sortedItems = getSortedItems();
+      const sortedItems = getSortedItems().filter(item => isItemVisibleInRegion(item, region));
 
       await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
         includeMask: options.includeMask !== false
@@ -3458,7 +4074,7 @@ export function initCanvasDrag() {
     if (type === 'mask') {
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, clip.w, clip.h);
-      const sortedItems = getSortedItems();
+      const sortedItems = getSortedItems().filter(item => isItemVisibleInRegion(item, region));
       await drawExportItemsInOrder(ctx, sortedItems, clip, scale, {
         onlyMask: true
       });
@@ -3529,6 +4145,7 @@ export function initCanvasDrag() {
       const rect = getItemSceneRect(item);
       const area = rect.w * rect.h;
       const inside = rectIntersectArea(rect, viewport);
+      const frameEnabled = isItemVisibleInRegion(item, region);
 
       return {
         itemId: item.id,
@@ -3549,7 +4166,8 @@ export function initCanvasDrag() {
               h: rect.h / viewport.h
             }
           : null,
-        visible: inside > 0,
+        frameEnabled,
+        visible: inside > 0 && frameEnabled,
         coverage: area > 0 ? inside / area : 0
       };
     });
@@ -3560,6 +4178,8 @@ export function initCanvasDrag() {
       schemaVersion: 1,
       sceneSessionId,
       viewportIndex: index,
+      frameId: region?.id || null,
+      frameColor: region?.color || null,
       exportType: type,
       // 取景框在场景坐标系里的位置。同一 sceneSessionId 下的多个取景框
       // 可以直接做矩形相交，得到关键帧之间的重叠区域。
@@ -3603,6 +4223,8 @@ export function initCanvasDrag() {
       bufferClip.sceneSessionId = composition.sceneSessionId;
       bufferClip.viewportIndex = composition.viewportIndex;
       bufferClip.viewportSceneRect = composition.viewportSceneRect;
+      bufferClip.frameId = composition.frameId;
+      bufferClip.frameColor = composition.frameColor;
     }
 
     window.dispatchEvent(
@@ -3675,7 +4297,20 @@ export function initCanvasDrag() {
     }
 
     const now = Date.now();
+    const dragSessionId = data?.__canvasDragSessionId || data?.dragSessionId || null;
+
+    processedCanvasDragSessions.forEach((processedAt, sessionId) => {
+      if (now - processedAt > CANVAS_DRAG_SESSION_TTL) {
+        processedCanvasDragSessions.delete(sessionId);
+      }
+    });
+
+    if (dragSessionId && processedCanvasDragSessions.has(dragSessionId)) {
+      return;
+    }
+
     if (
+      !dragSessionId &&
       lastExternalCanvasDrop &&
       now - lastExternalCanvasDrop.time < 250 &&
       lastExternalCanvasDrop.url === resolvedUrl &&
@@ -3684,6 +4319,7 @@ export function initCanvasDrag() {
     ) {
       return;
     }
+    if (dragSessionId) processedCanvasDragSessions.set(dragSessionId, now);
     lastExternalCanvasDrop = { url: resolvedUrl, clientX, clientY, time: now };
 
     const scenePoint = screenToScene(clientX, clientY);
@@ -3956,6 +4592,9 @@ export function initCanvasDrag() {
         if (item.deleteBtn) item.deleteBtn.remove();
         if (item.element) item.element.remove();
         if (item.labelEl) item.labelEl.remove();
+        if (item.activeFrameOverlayEl) item.activeFrameOverlayEl.remove();
+        if (item.activeFrameOutlineEl) item.activeFrameOutlineEl.remove();
+        if (item.frameMembershipEl) item.frameMembershipEl.remove();
       });
 
       droppedImages = [];
@@ -3981,7 +4620,7 @@ export function initCanvasDrag() {
       });
 
       subCanvases = [];
-      activeRegionId = null;
+      setActiveRegion(null);
 
       if (tempDrawRect && tempDrawRect.parentNode) {
         tempDrawRect.parentNode.removeChild(tempDrawRect);
@@ -4005,7 +4644,7 @@ export function initCanvasDrag() {
       width:100px;
       height:auto;
       display:block;
-      border:0.5px solid rgba(100,116,139,0.32);
+      border:none;
       border-radius:4px;
       cursor:grab;
       z-index:10;
@@ -4038,7 +4677,8 @@ export function initCanvasDrag() {
       showDeleteTimer: null,
       hideDeleteTimer: null,
       flipX: false,
-      flipY: false
+      flipY: false,
+      hiddenRegionIds: new Set()
     };
 
     droppedImages.push(item);
@@ -4096,7 +4736,8 @@ export function initCanvasDrag() {
       showDeleteTimer: null,
       hideDeleteTimer: null,
       flipX: false,
-      flipY: false
+      flipY: false,
+      hiddenRegionIds: new Set()
     };
 
     droppedImages.push(item);
@@ -4179,6 +4820,8 @@ export function initCanvasDrag() {
       e.preventDefault();
 
       subCanvasStart = screenToScene(e.clientX, e.clientY);
+      regionColor = getNextFrameColor();
+      updateToolbarColorIndicators();
 
       tempDrawRect = document.createElement('div');
       tempDrawRect.style.cssText = `
@@ -4510,6 +5153,9 @@ export function initCanvasDrag() {
         e.target === maskCanvas;
 
       if (!isEmptyTarget) return;
+      if (!paintMode && !drawSubCanvasMode && e.button === 0) {
+        setActiveRegion(null);
+      }
       handleEmptyAreaMouseDown(e);
     });
 

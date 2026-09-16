@@ -7,3 +7,4 @@ backend/local_assets/
 backend/stitched_videos/
 *.db
 .env
+backend/.env
