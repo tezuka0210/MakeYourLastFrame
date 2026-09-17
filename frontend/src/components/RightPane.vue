@@ -68,33 +68,6 @@
             aria-label="Add to Buffer"
           >
             <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M4 7h16" />
-              <path d="M6 11h8" />
-              <path d="M6 15h8" />
-              <path d="M17 10v6" />
-              <path d="M14 13h6" />
-            </svg>
-          </button>
-
-          <button
-            id="export-mask-btn"
-            class="toolbar-btn"
-            title="Export Mask"
-            aria-label="Export Mask"
-          >
-            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M4 12c3-5 13-5 16 0-3 5-13 5-16 0z" />
-              <circle cx="12" cy="12" r="2.2" />
-            </svg>
-          </button>
-
-          <button
-            id="export-composite-btn"
-            class="toolbar-btn"
-            title="Export Composite"
-            aria-label="Export Composite"
-          >
-            <svg viewBox="0 0 24 24" class="toolbar-icon" fill="none" stroke="currentColor" stroke-width="1.8">
               <rect x="4" y="5" width="10" height="10" rx="2" />
               <rect x="10" y="9" width="10" height="10" rx="2" />
             </svg>

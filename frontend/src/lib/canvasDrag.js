@@ -4459,8 +4459,6 @@ export function initCanvasDrag() {
 
     const collectBufferBtn = document.getElementById('collect-buffer-btn');
     const exportSourceBtn = document.getElementById('export-source-btn');
-    const exportMaskBtn = document.getElementById('export-mask-btn');
-    const exportCompositeBtn = document.getElementById('export-composite-btn');
 
     if (selectBtn) {
       selectBtn.title = 'Select — drag on empty canvas to marquee-select and group assets. Hold Ctrl/Command or Space (or use the middle mouse button) to pan.';
@@ -4552,21 +4550,6 @@ export function initCanvasDrag() {
       exportSourceBtn.onclick = () => exportCanvasToImage('origin', {
         download: true,
         emitToBuffer: false
-      });
-    }
-
-    if (exportMaskBtn) {
-      exportMaskBtn.onclick = () => exportCanvasToImage('mask', {
-        download: true,
-        emitToBuffer: false
-      });
-    }
-
-    if (exportCompositeBtn) {
-      exportCompositeBtn.onclick = () => exportCanvasToImage('combined', {
-        download: true,
-        emitToBuffer: false,
-        includeMask: false
       });
     }
 
